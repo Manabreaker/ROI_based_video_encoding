@@ -1,0 +1,13 @@
+# Project exclude paths
+/out/
+
+# IDE exclude paths
+.idea/
+*.iml
+
+# Demonstration exclude paths
+demo_out
+
+# Nextcloud exclude paths
+nextcloud
+
