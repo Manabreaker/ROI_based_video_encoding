@@ -43,7 +43,7 @@ ffprobe -version
 ## Сборка
 
 ```bash
-go build -o roi-poc ./cmd/roi-poc
+go build -o roi-poc ./cmd/roi
 ```
 
 ## Быстрый запуск на тестовом видео
