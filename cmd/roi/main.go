@@ -46,6 +46,9 @@ type Config struct {
 	// Periphery degradation settings.
 	ManualPeripheryScale float64
 	ManualBlurRadius     int
+	MiddleMargin         float64
+	MiddleScale          float64
+	MiddleBlurRadius     int
 	ROIMinScale          float64
 	ROIMaxBlur           int
 
@@ -57,8 +60,10 @@ type Config struct {
 	ROIMaxrateMultiplier float64
 	ROIBufsizeSeconds    float64
 
-	// General x264 tuning.
+	// Encoder tuning.
+	VideoEncoder  string
 	Preset        string
+	NVENCPreset   string
 	FitIterations int
 
 	// Motion-based ROI detection.
@@ -106,10 +111,13 @@ type Artifact struct {
 // Candidate records one tried ROI encoding variant before the final choice.
 type Candidate struct {
 	Kind        string  `json:"kind"`
+	Encoder     string  `json:"encoder,omitempty"`
 	CRF         int     `json:"crf"`
 	RateControl string  `json:"rate_control,omitempty"`
 	Scale       float64 `json:"periphery_scale,omitempty"`
 	Blur        int     `json:"periphery_blur,omitempty"`
+	MiddleScale float64 `json:"middle_scale,omitempty"`
+	MiddleBlur  int     `json:"middle_blur,omitempty"`
 	Kbps        float64 `json:"bitrate_kbps"`
 	ROIYPSNR    float64 `json:"roi_psnr_y_db,omitempty"`
 	Note        string  `json:"note,omitempty"`
@@ -119,10 +127,13 @@ type Candidate struct {
 // CandidateSummary is the report-safe view of a Candidate.
 type CandidateSummary struct {
 	Kind        string  `json:"kind"`
+	Encoder     string  `json:"encoder,omitempty"`
 	CRF         int     `json:"crf"`
 	RateControl string  `json:"rate_control,omitempty"`
 	Scale       float64 `json:"periphery_scale,omitempty"`
 	Blur        int     `json:"periphery_blur,omitempty"`
+	MiddleScale float64 `json:"middle_scale,omitempty"`
+	MiddleBlur  int     `json:"middle_blur,omitempty"`
 	Kbps        float64 `json:"bitrate_kbps"`
 	ROIYPSNR    float64 `json:"roi_psnr_y_db,omitempty"`
 	Note        string  `json:"note,omitempty"`
@@ -131,6 +142,7 @@ type CandidateSummary struct {
 // EncodeDecision explains the chosen settings and measured result for one side of the comparison.
 type EncodeDecision struct {
 	Name            string             `json:"name"`
+	Encoder         string             `json:"encoder,omitempty"`
 	TargetKbps      float64            `json:"target_kbps,omitempty"`
 	ActualKbps      float64            `json:"actual_kbps"`
 	WithinTolerance bool               `json:"within_tolerance"`
@@ -138,6 +150,9 @@ type EncodeDecision struct {
 	RateControl     string             `json:"rate_control,omitempty"`
 	Scale           float64            `json:"periphery_scale,omitempty"`
 	Blur            int                `json:"periphery_blur,omitempty"`
+	MiddleScale     float64            `json:"middle_scale,omitempty"`
+	MiddleBlur      int                `json:"middle_blur,omitempty"`
+	MiddleMargin    float64            `json:"middle_margin,omitempty"`
 	ROIYPSNR        float64            `json:"roi_psnr_y_db,omitempty"`
 	SizeBytes       int64              `json:"size_bytes,omitempty"`
 	Note            string             `json:"note,omitempty"`
@@ -259,17 +274,22 @@ func parseFlags() Config {
 
 	flag.Float64Var(&cfg.ManualPeripheryScale, "periphery-scale", 0.35, "manual periphery scale when --fit-roi=false")
 	flag.IntVar(&cfg.ManualBlurRadius, "blur", 2, "manual periphery blur when --fit-roi=false")
+	flag.Float64Var(&cfg.MiddleMargin, "middle-margin", 0.35, "middle-quality ring expansion around ROI as fraction of ROI size")
+	flag.Float64Var(&cfg.MiddleScale, "middle-scale", 0.67, "middle-quality ring scale before re-upscaling; roughly 720p from a 1080p source")
+	flag.IntVar(&cfg.MiddleBlurRadius, "middle-blur", 1, "middle-quality ring blur radius")
 	flag.Float64Var(&cfg.ROIMinScale, "roi-min-scale", 0.12, "minimum periphery scale candidate for ROI fitting")
 	flag.IntVar(&cfg.ROIMaxBlur, "roi-max-blur", 10, "maximum periphery blur candidate for ROI fitting")
 
 	flag.StringVar(&cfg.ROIRateControl, "roi-rate-control", "abr", "ROI encoder rate control: abr keeps ROI output near --target-bitrate; crf preserves old fixed-CRF behavior")
-	flag.BoolVar(&cfg.ROITwoPass, "roi-two-pass", true, "use x264 two-pass ABR for ROI output when --roi-rate-control=abr")
+	flag.BoolVar(&cfg.ROITwoPass, "roi-two-pass", true, "use x264 two-pass ABR for ROI output when --roi-rate-control=abr and --encoder=libx264")
 	flag.BoolVar(&cfg.ROIFitMetric, "roi-fit-metric", true, "during ROI fitting, measure ROI-crop PSNR for each candidate and pick the least degraded periphery near the best ROI score")
 	flag.Float64Var(&cfg.ROIPSNRTieDB, "roi-psnr-tie-db", 0.25, "when fitting ROI by metric, prefer milder periphery if ROI PSNR is within this many dB of the best candidate")
 	flag.Float64Var(&cfg.ROIMaxrateMultiplier, "roi-maxrate-multiplier", 1.15, "ABR maxrate as a multiplier of --target-bitrate for ROI output")
 	flag.Float64Var(&cfg.ROIBufsizeSeconds, "roi-bufsize-seconds", 2.0, "ABR VBV buffer size in target-bitrate seconds for ROI output")
 
+	flag.StringVar(&cfg.VideoEncoder, "encoder", "auto", "video encoder: auto, libx264, or h264_nvenc")
 	flag.StringVar(&cfg.Preset, "preset", "veryfast", "x264 preset")
+	flag.StringVar(&cfg.NVENCPreset, "nvenc-preset", "p4", "NVENC preset used when --encoder resolves to h264_nvenc")
 	flag.IntVar(&cfg.FitIterations, "fit-iterations", 9, "maximum CRF search iterations for emergency ROI fitting")
 
 	flag.Float64Var(&cfg.MotionWindow, "motion-window", 0.6, "time gap in seconds between frames used for simple motion ROI detection")
@@ -305,6 +325,12 @@ func run(cfg Config) error {
 	if err := ensureTool("ffprobe"); err != nil {
 		return err
 	}
+	resolvedEncoder, err := resolveVideoEncoder(cfg.VideoEncoder)
+	if err != nil {
+		return err
+	}
+	cfg.VideoEncoder = resolvedEncoder
+
 	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
@@ -324,6 +350,10 @@ func run(cfg Config) error {
 
 	fmt.Printf("      input: %dx%d, duration %.2fs, fps %.2f\n", info.Width, info.Height, info.Duration, info.FPS)
 	fmt.Printf("      target actual bitrate: %.1f kbps\n", targetKbps)
+	fmt.Printf("      encoder: %s\n", cfg.VideoEncoder)
+	if isNVENC(cfg) && cfg.ROITwoPass {
+		fmt.Println("      note: x264 two-pass fitting is disabled for h264_nvenc; using NVENC single-pass ABR")
+	}
 
 	tmpDir := filepath.Join(cfg.OutDir, "_tmp")
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
@@ -367,10 +397,12 @@ func run(cfg Config) error {
 		return err
 	}
 
-	fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, periphery scale %.2f, blur %d\n",
+	fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, middle scale %.2f blur %d, low scale %.2f blur %d\n",
 		roiDecision.TargetKbps,
 		roiDecision.ActualKbps,
 		roiDecision.CRF,
+		roiDecision.MiddleScale,
+		roiDecision.MiddleBlur,
 		roiDecision.Scale,
 		roiDecision.Blur,
 	)
@@ -482,10 +514,10 @@ func run(cfg Config) error {
 		Decisions:     []EncodeDecision{baselineDecision, roiDecision},
 		Notes: []string{
 			"Baseline is the original input video and is not re-encoded by the PoC.",
-			"ROI output keeps the selected ROI from the original frame before encoding and deliberately simplifies the periphery.",
+			"ROI output keeps the selected ROI from the original frame, adds a medium-quality ring around it, and uses stronger degradation outside that ring.",
 			"The intended comparison is subjective quality near the ROI against a lower measured bitrate and smaller generated ROI file.",
 			"The ROI is visually preserved by preprocessing, not by encoder-level ROI QP maps, so it is not mathematically lossless after final encoding.",
-			"Colored ROI boxes and text overlays are drawn only on the final comparison video and do not affect measured input/ROI bitrates.",
+			"Green, orange, and red zone boxes plus text overlays are drawn only on the final comparison video and do not affect measured input/ROI bitrates.",
 		},
 	}
 
@@ -548,6 +580,15 @@ func validateConfig(cfg Config) error {
 	if cfg.ManualBlurRadius < 0 || cfg.ManualBlurRadius > 40 {
 		return errors.New("--blur must be in range 0..40")
 	}
+	if cfg.MiddleMargin < 0 || cfg.MiddleMargin > 2 {
+		return errors.New("--middle-margin must be in range 0..2")
+	}
+	if cfg.MiddleScale <= 0 || cfg.MiddleScale > 1 {
+		return errors.New("--middle-scale must be in range (0,1]")
+	}
+	if cfg.MiddleBlurRadius < 0 || cfg.MiddleBlurRadius > 40 {
+		return errors.New("--middle-blur must be in range 0..40")
+	}
 	if cfg.ROIMinScale <= 0 || cfg.ROIMinScale > 1 {
 		return errors.New("--roi-min-scale must be in range (0,1]")
 	}
@@ -568,6 +609,14 @@ func validateConfig(cfg Config) error {
 	if cfg.ROIBufsizeSeconds <= 0 || cfg.ROIBufsizeSeconds > 30 {
 		return errors.New("--roi-bufsize-seconds must be in range (0,30]")
 	}
+	switch normalizeVideoEncoder(cfg.VideoEncoder) {
+	case "auto", "libx264", "h264_nvenc":
+	default:
+		return errors.New("--encoder must be auto, libx264, or h264_nvenc")
+	}
+	if strings.TrimSpace(cfg.NVENCPreset) == "" {
+		return errors.New("--nvenc-preset must not be empty")
+	}
 	if cfg.FitIterations < 1 || cfg.FitIterations > 30 {
 		return errors.New("--fit-iterations must be in range 1..30")
 	}
@@ -583,6 +632,49 @@ func ensureTool(name string) error {
 		return fmt.Errorf("required tool %q not found in PATH", name)
 	}
 	return nil
+}
+
+// resolveVideoEncoder picks NVENC in auto mode when FFmpeg advertises h264_nvenc.
+func resolveVideoEncoder(requested string) (string, error) {
+	encoder := normalizeVideoEncoder(requested)
+	if encoder == "" || encoder == "auto" {
+		if ffmpegHasEncoder("h264_nvenc") {
+			return "h264_nvenc", nil
+		}
+		return "libx264", nil
+	}
+
+	if encoder == "h264_nvenc" && !ffmpegHasEncoder("h264_nvenc") {
+		return "", errors.New("--encoder h264_nvenc was requested, but ffmpeg does not list h264_nvenc")
+	}
+
+	return encoder, nil
+}
+
+// normalizeVideoEncoder canonicalizes CLI encoder names.
+func normalizeVideoEncoder(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+// ffmpegHasEncoder checks FFmpeg capabilities without shell pipelines or eval.
+func ffmpegHasEncoder(name string) bool {
+	out, err := commandOutput("ffmpeg", "-hide_banner", "-encoders")
+	if err != nil {
+		return false
+	}
+	return encoderListed(string(out), name)
+}
+
+// encoderListed reports whether an encoder appears as a standalone token.
+func encoderListed(ffmpegEncoders string, name string) bool {
+	for _, line := range strings.Split(ffmpegEncoders, "\n") {
+		for _, field := range strings.Fields(line) {
+			if field == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // probeVideo reads stream size, duration, and frame rate through ffprobe.
@@ -987,6 +1079,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 
 		c := Candidate{
 			Kind:        roiCandidateKind(rateControl),
+			Encoder:     cfg.VideoEncoder,
 			CRF:         cfg.ROIHighQualityCRF,
 			RateControl: rateControl,
 			Scale:       cfg.ManualPeripheryScale,
@@ -994,6 +1087,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 			Kbps:        actual,
 			Path:        path,
 		}
+		c.MiddleScale, c.MiddleBlur = middleQualitySettings(cfg, c.Scale, c.Blur)
 		if cfg.ROIFitMetric {
 			if err := attachROIPSNRMetric(cfg, roi, &c, filepath.Join(workDir, "roi_manual_psnr.log")); err != nil {
 				fmt.Printf("      warning: ROI candidate metric failed: %v\n", err)
@@ -1006,6 +1100,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 
 		return EncodeDecision{
 			Name:            "roi",
+			Encoder:         cfg.VideoEncoder,
 			TargetKbps:      targetKbps,
 			ActualKbps:      actual,
 			WithinTolerance: withinTolerance(actual, targetKbps, cfg.Tolerance),
@@ -1013,6 +1108,9 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 			RateControl:     rateControl,
 			Scale:           cfg.ManualPeripheryScale,
 			Blur:            cfg.ManualBlurRadius,
+			MiddleScale:     c.MiddleScale,
+			MiddleBlur:      c.MiddleBlur,
+			MiddleMargin:    cfg.MiddleMargin,
 			ROIYPSNR:        c.ROIYPSNR,
 			Note:            fmt.Sprintf("manual ROI periphery settings; %s rate control", rateControl),
 			Candidates:      []CandidateSummary{candidateSummary(c)},
@@ -1043,6 +1141,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 
 		c := Candidate{
 			Kind:        roiCandidateKind(rateControl),
+			Encoder:     cfg.VideoEncoder,
 			CRF:         cfg.ROIHighQualityCRF,
 			RateControl: rateControl,
 			Scale:       s.Scale,
@@ -1050,6 +1149,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 			Kbps:        kbps,
 			Path:        path,
 		}
+		c.MiddleScale, c.MiddleBlur = middleQualitySettings(cfg, c.Scale, c.Blur)
 
 		if cfg.ROIFitMetric {
 			logPath := filepath.Join(workDir, fmt.Sprintf("roi_candidate_%02d_psnr.log", idx))
@@ -1061,18 +1161,24 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 		candidates = append(candidates, c)
 
 		if c.ROIYPSNR > 0 {
-			fmt.Printf("      ROI candidate %s, CRF %2d, scale %.2f, blur %2d -> %.1f kbps, ROI PSNR-Y %.2f dB\n",
+			fmt.Printf("      ROI candidate %s/%s, CRF %2d, middle %.2f/%d, low %.2f/%d -> %.1f kbps, ROI PSNR-Y %.2f dB\n",
+				c.Encoder,
 				c.RateControl,
 				c.CRF,
+				c.MiddleScale,
+				c.MiddleBlur,
 				c.Scale,
 				c.Blur,
 				c.Kbps,
 				c.ROIYPSNR,
 			)
 		} else {
-			fmt.Printf("      ROI candidate %s, CRF %2d, scale %.2f, blur %2d -> %.1f kbps\n",
+			fmt.Printf("      ROI candidate %s/%s, CRF %2d, middle %.2f/%d, low %.2f/%d -> %.1f kbps\n",
+				c.Encoder,
 				c.RateControl,
 				c.CRF,
+				c.MiddleScale,
+				c.MiddleBlur,
 				c.Scale,
 				c.Blur,
 				c.Kbps,
@@ -1109,6 +1215,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 
 				c := Candidate{
 					Kind:        "roi-full-detail-lower-crf",
+					Encoder:     cfg.VideoEncoder,
 					CRF:         crf,
 					RateControl: "crf",
 					Scale:       1.0,
@@ -1117,6 +1224,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 					Path:        path,
 					Note:        "content is simple; tried lower CRF to use more of the requested budget without degrading periphery",
 				}
+				c.MiddleScale, c.MiddleBlur = middleQualitySettings(cfg, c.Scale, c.Blur)
 				candidates = append(candidates, c)
 
 				fmt.Printf("      ROI full-detail candidate CRF %2d, scale 1.00, blur 0 -> %.1f kbps\n", crf, kbps)
@@ -1169,6 +1277,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 
 	return EncodeDecision{
 		Name:            "roi",
+		Encoder:         best.Encoder,
 		TargetKbps:      targetKbps,
 		ActualKbps:      best.Kbps,
 		WithinTolerance: withinTolerance(best.Kbps, targetKbps, cfg.Tolerance),
@@ -1176,6 +1285,9 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 		RateControl:     best.RateControl,
 		Scale:           best.Scale,
 		Blur:            best.Blur,
+		MiddleScale:     best.MiddleScale,
+		MiddleBlur:      best.MiddleBlur,
+		MiddleMargin:    cfg.MiddleMargin,
 		ROIYPSNR:        best.ROIYPSNR,
 		Note:            note,
 		Candidates:      candidateSummaries(candidates),
@@ -1204,6 +1316,7 @@ func fitROIEmergencyCRF(cfg Config, info VideoInfo, roi ROI, targetKbps float64,
 
 		c := Candidate{
 			Kind:        "roi-emergency-quality-loss",
+			Encoder:     cfg.VideoEncoder,
 			CRF:         crf,
 			RateControl: "crf",
 			Scale:       scale,
@@ -1212,6 +1325,7 @@ func fitROIEmergencyCRF(cfg Config, info VideoInfo, roi ROI, targetKbps float64,
 			Path:        path,
 			Note:        "ROI CRF increased to hit target; high-quality ROI no longer strictly preserved",
 		}
+		c.MiddleScale, c.MiddleBlur = middleQualitySettings(cfg, c.Scale, c.Blur)
 		cache[crf] = c
 
 		fmt.Printf("      ROI emergency candidate CRF %2d, scale %.2f, blur %2d -> %.1f kbps\n",
@@ -1261,9 +1375,9 @@ func renderROICandidate(cfg Config, info VideoInfo, roi ROI, output string, crf 
 	return renderROICandidateCRF(cfg, info, roi, output, crf, scale, blur)
 }
 
-// renderROICandidateCRF encodes an ROI candidate with fixed x264 CRF.
+// renderROICandidateCRF encodes an ROI candidate with fixed quality settings.
 func renderROICandidateCRF(cfg Config, info VideoInfo, roi ROI, output string, crf int, scale float64, blur int) error {
-	filter := buildROIFilter(info, roi, scale, blur)
+	filter := buildROIFilter(cfg, info, roi, scale, blur)
 
 	args := []string{
 		"-hide_banner",
@@ -1272,13 +1386,10 @@ func renderROICandidateCRF(cfg Config, info VideoInfo, roi ROI, output string, c
 		"-filter_complex", filter,
 		"-map", "[v]",
 		"-an",
-		"-c:v", "libx264",
-		"-preset", cfg.Preset,
-		"-crf", strconv.Itoa(crf),
 		"-pix_fmt", "yuv420p",
-		"-movflags", "+faststart",
-		output,
 	}
+	args = append(args, qualityEncoderArgs(cfg, crf)...)
+	args = append(args, "-movflags", "+faststart", output)
 
 	return runCommand("ffmpeg", args...)
 }
@@ -1289,7 +1400,7 @@ func renderROICandidateABR(cfg Config, info VideoInfo, roi ROI, output string, s
 		return errors.New("targetKbps must be greater than zero for ROI ABR encoding")
 	}
 
-	filter := buildROIFilter(info, roi, scale, blur)
+	filter := buildROIFilter(cfg, info, roi, scale, blur)
 	bitrate, maxrate, bufsize := roiRateArgs(cfg, targetKbps)
 
 	baseArgs := []string{
@@ -1299,19 +1410,15 @@ func renderROICandidateABR(cfg Config, info VideoInfo, roi ROI, output string, s
 		"-filter_complex", filter,
 		"-map", "[v]",
 		"-an",
-		"-c:v", "libx264",
-		"-preset", cfg.Preset,
-		"-b:v", bitrate,
-		"-maxrate", maxrate,
-		"-bufsize", bufsize,
 		"-pix_fmt", "yuv420p",
 	}
+	baseArgs = append(baseArgs, bitrateEncoderArgs(cfg, bitrate, maxrate, bufsize)...)
 
 	if gop := gopSize(info); gop > 0 {
 		baseArgs = append(baseArgs, "-g", strconv.Itoa(gop))
 	}
 
-	if !cfg.ROITwoPass {
+	if !cfg.ROITwoPass || isNVENC(cfg) {
 		args := append([]string{}, baseArgs...)
 		args = append(args, "-movflags", "+faststart", output)
 		return runCommand("ffmpeg", args...)
@@ -1342,23 +1449,101 @@ func renderROICandidateABR(cfg Config, info VideoInfo, roi ROI, output string, s
 	return runCommand("ffmpeg", secondPass...)
 }
 
-// buildROIFilter creates a degraded full-frame background and overlays the original ROI crop.
-func buildROIFilter(info VideoInfo, roi ROI, scale float64, blur int) string {
-	peripheryFilter := buildPeripheryFilter(info, scale, blur)
+// qualityEncoderArgs returns encoder-specific arguments for fixed-quality renders.
+func qualityEncoderArgs(cfg Config, quality int) []string {
+	if isNVENC(cfg) {
+		return []string{
+			"-c:v", "h264_nvenc",
+			"-preset", cfg.NVENCPreset,
+			"-rc", "vbr",
+			"-cq", strconv.Itoa(quality),
+			"-b:v", "0",
+		}
+	}
+
+	return []string{
+		"-c:v", "libx264",
+		"-preset", cfg.Preset,
+		"-crf", strconv.Itoa(quality),
+	}
+}
+
+// bitrateEncoderArgs returns encoder-specific arguments for target-bitrate renders.
+func bitrateEncoderArgs(cfg Config, bitrate string, maxrate string, bufsize string) []string {
+	if isNVENC(cfg) {
+		return []string{
+			"-c:v", "h264_nvenc",
+			"-preset", cfg.NVENCPreset,
+			"-rc", "vbr",
+			"-b:v", bitrate,
+			"-maxrate", maxrate,
+			"-bufsize", bufsize,
+		}
+	}
+
+	return []string{
+		"-c:v", "libx264",
+		"-preset", cfg.Preset,
+		"-b:v", bitrate,
+		"-maxrate", maxrate,
+		"-bufsize", bufsize,
+	}
+}
+
+// isNVENC reports whether the resolved encoder uses NVIDIA's hardware encoder.
+func isNVENC(cfg Config) bool {
+	return normalizeVideoEncoder(cfg.VideoEncoder) == "h264_nvenc"
+}
+
+// buildROIFilter creates low, middle, and original-ROI layers before final encoding.
+func buildROIFilter(cfg Config, info VideoInfo, roi ROI, scale float64, blur int) string {
+	middle := middleROI(cfg, roi, info)
+	middleScale, middleBlur := middleQualitySettings(cfg, scale, blur)
+	lowFilter := buildPeripheryFilter(info, scale, blur)
+	middleFilter := buildPeripheryFilter(info, middleScale, middleBlur)
 
 	return fmt.Sprintf(
-		"[0:v]split=2[bgsrc][roisrc];"+
-			"[bgsrc]%s[bg];"+
+		"[0:v]split=3[lowsrc][middlesrc][roisrc];"+
+			"[lowsrc]%s[low];"+
+			"[middlesrc]%s,crop=%d:%d:%d:%d[mid];"+
 			"[roisrc]crop=%d:%d:%d:%d,format=yuv420p[roi];"+
-			"[bg][roi]overlay=%d:%d,format=yuv420p[v]",
-		peripheryFilter,
+			"[low][mid]overlay=%d:%d[withmid];"+
+			"[withmid][roi]overlay=%d:%d,format=yuv420p[v]",
+		lowFilter,
+		middleFilter,
+		middle.W,
+		middle.H,
+		middle.X,
+		middle.Y,
 		roi.W,
 		roi.H,
 		roi.X,
 		roi.Y,
+		middle.X,
+		middle.Y,
 		roi.X,
 		roi.Y,
 	)
+}
+
+// middleROI expands the ROI to create the orange medium-quality ring.
+func middleROI(cfg Config, roi ROI, info VideoInfo) ROI {
+	return expandROI(roi, cfg.MiddleMargin, info)
+}
+
+// middleQualitySettings keeps the middle ring no worse than the outer low layer.
+func middleQualitySettings(cfg Config, lowScale float64, lowBlur int) (float64, int) {
+	scale := cfg.MiddleScale
+	if scale < lowScale {
+		scale = lowScale
+	}
+
+	blur := cfg.MiddleBlurRadius
+	if blur > lowBlur {
+		blur = lowBlur
+	}
+
+	return scale, blur
 }
 
 // roiRateArgs derives bitrate, maxrate, and bufsize arguments for x264 ABR.
@@ -1579,7 +1764,7 @@ func chooseBestROIPerceptualCandidate(candidates []Candidate, targetKbps float64
 		return chooseHighestROIPSNR(pool)
 	}
 
-	return chooseLeastDegraded(nearBest)
+	return choosePreferredPeripheryCandidate(nearBest, preferredScale, preferredBlur)
 }
 
 // peripheryDegradedCandidates keeps candidates that visibly change the area outside the ROI.
@@ -1830,10 +2015,13 @@ func appendUniqueCRF(candidates []Candidate, c Candidate) []Candidate {
 func candidateSummary(c Candidate) CandidateSummary {
 	return CandidateSummary{
 		Kind:        c.Kind,
+		Encoder:     c.Encoder,
 		CRF:         c.CRF,
 		RateControl: c.RateControl,
 		Scale:       c.Scale,
 		Blur:        c.Blur,
+		MiddleScale: c.MiddleScale,
+		MiddleBlur:  c.MiddleBlur,
 		Kbps:        c.Kbps,
 		ROIYPSNR:    c.ROIYPSNR,
 		Note:        c.Note,
@@ -2117,15 +2305,32 @@ func renderComparison(
 		prefix = leftChain + ";" + rightChain + ";"
 	}
 
-	leftBox := fmt.Sprintf(
-		"drawbox=x=%d:y=%d:w=%d:h=%d:color=red@0.90:t=4",
+	middle := middleROI(cfg, roi, info)
+
+	leftROIBox := fmt.Sprintf(
+		"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=4",
 		roi.X,
 		roi.Y,
 		roi.W,
 		roi.H,
 	)
 
-	rightBox := fmt.Sprintf(
+	rightLowBox := fmt.Sprintf(
+		"drawbox=x=%d:y=0:w=%d:h=%d:color=red@0.90:t=5",
+		info.Width,
+		info.Width,
+		info.Height,
+	)
+
+	rightMiddleBox := fmt.Sprintf(
+		"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=5",
+		info.Width+middle.X,
+		middle.Y,
+		middle.W,
+		middle.H,
+	)
+
+	rightROIBox := fmt.Sprintf(
 		"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=4",
 		info.Width+roi.X,
 		roi.Y,
@@ -2134,9 +2339,11 @@ func renderComparison(
 	)
 
 	filter := prefix + fmt.Sprintf(
-		"[left][right]hstack=inputs=2,%s,%s,format=yuv420p[v]",
-		leftBox,
-		rightBox,
+		"[left][right]hstack=inputs=2,%s,%s,%s,%s,format=yuv420p[v]",
+		leftROIBox,
+		rightLowBox,
+		rightMiddleBox,
+		rightROIBox,
 	)
 
 	args := []string{
@@ -2147,13 +2354,10 @@ func renderComparison(
 		"-filter_complex", filter,
 		"-map", "[v]",
 		"-an",
-		"-c:v", "libx264",
-		"-preset", cfg.Preset,
-		"-crf", "18",
 		"-pix_fmt", "yuv420p",
-		"-movflags", "+faststart",
-		output,
 	}
+	args = append(args, qualityEncoderArgs(cfg, 18)...)
+	args = append(args, "-movflags", "+faststart", output)
 
 	return runCommand("ffmpeg", args...)
 }
@@ -2219,11 +2423,15 @@ func panelBaseFilters(title string, decision EncodeDecision, isROI bool) []strin
 	line4 := ""
 	if isROI {
 		rateControl := strings.ToUpper(strings.TrimSpace(decision.RateControl))
+		middleScale := decision.MiddleScale
+		if middleScale <= 0 {
+			middleScale = 1
+		}
 		if rateControl == "" || rateControl == "CRF" {
-			line4 = fmt.Sprintf("ROI CRF %d | bg scale %.2f blur %d", decision.CRF, decision.Scale, decision.Blur)
+			line4 = fmt.Sprintf("G ROI | O %.2f b%d | R %.2f b%d", middleScale, decision.MiddleBlur, decision.Scale, decision.Blur)
 		} else {
 			line3 = fmt.Sprintf("%s | %s target-rate", status, rateControl)
-			line4 = fmt.Sprintf("ROI biased | bg scale %.2f blur %d", decision.Scale, decision.Blur)
+			line4 = fmt.Sprintf("G ROI | O %.2f b%d | R %.2f b%d", middleScale, decision.MiddleBlur, decision.Scale, decision.Blur)
 		}
 	} else {
 		line4 = fmt.Sprintf("uniform full-frame CRF %d", decision.CRF)
@@ -2276,8 +2484,18 @@ func renderPreview(cfg Config, info VideoInfo, roi ROI, output string) error {
 		t = math.Min(info.Duration*0.25, math.Max(0.0, info.Duration-0.1))
 	}
 
+	middle := middleROI(cfg, roi, info)
+
 	filter := fmt.Sprintf(
-		"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.95:t=6,format=rgb24",
+		"drawbox=x=0:y=0:w=%d:h=%d:color=red@0.90:t=6,"+
+			"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=6,"+
+			"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.95:t=6,format=rgb24",
+		info.Width,
+		info.Height,
+		middle.X,
+		middle.Y,
+		middle.W,
+		middle.H,
 		roi.X,
 		roi.Y,
 		roi.W,
