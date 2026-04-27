@@ -1,36 +1,72 @@
-# ROI Video Streaming PoC на Go
+# ROI Based Video Streaming
 
-PoC для Этапа 3: программа берёт входное видео, выбирает область интереса, деградирует периферию и оставляет ROI в высоком качестве.
+CLI на Go для демонстрации ROI-based video streaming: входное видео используется как baseline, а отдельный ROI-вариант кодируется так, чтобы важная область кадра оставалась субъективно близкой к исходнику при меньшем битрейте.
 
-Это минимально демонстрирует идею ROI-based streaming перед интеграцией настоящих QP/ROI-map энкодеров.
+Это не encoder-level ROI через QP-map. Текущая реализация строит маску качества средствами FFmpeg: ROI берётся из исходного кадра, вокруг него добавляется средняя зона, а периферия упрощается перед финальным H.264-кодированием.
 
-## Что создаётся на выходе
+## Что делает программа
 
-После запуска в папке результата будут файлы:
+Pipeline берётся из кода в `internal/roi/app.go`:
+
+1. Проверяет конфиг и наличие `ffmpeg`/`ffprobe`.
+2. Выбирает энкодер: `h264_nvenc`, если он доступен и выбран `--encoder auto`, иначе `libx264`.
+3. Читает параметры видео через `ffprobe`.
+4. Выбирает ROI: статически, из `--roi`, по центру кадра или простой motion-эвристикой.
+5. Генерирует `roi_high_quality_region.mp4`.
+6. Считает bitrate windows по пакетам видео через `ffprobe`.
+7. Рендерит `comparison_baseline_vs_roi.mp4` с текущим битрейтом и цветными зонами.
+8. Пишет JSON-отчёты и, при необходимости, считает ROI PSNR.
+
+Baseline теперь является исходным входным видео и не перекодируется. Отдельного `baseline_uniform_low_quality.mp4` больше нет.
+
+## Зоны качества
+
+Правая часть comparison-видео показывает ROI output с тремя зонами:
+
+- зелёная зона: ROI, кроп из исходного кадра;
+- оранжевая зона: middle ring вокруг ROI, среднее качество;
+- красная зона: outer periphery, самое сильное упрощение.
+
+Настройки зон:
+
+| Флаг                | Назначение                                    |
+|---------------------|-----------------------------------------------|
+| `--middle-margin`   | насколько расширить ROI для оранжевой зоны    |
+| `--middle-scale`    | scale для средней зоны перед обратным upscale |
+| `--middle-blur`     | blur для средней зоны                         |
+| `--periphery-scale` | scale для красной зоны при `--fit-roi=false`  |
+| `--blur`            | blur для красной зоны при `--fit-roi=false`   |
+| `--roi-min-scale`   | минимальный scale кандидатов при fitting      |
+| `--roi-max-blur`    | максимальный blur кандидатов при fitting      |
+
+По умолчанию fitting включён, поэтому программа пробует несколько уровней деградации периферии и выбирает вариант около `--target-bitrate`.
+
+## Артефакты
+
+После запуска в `--out` появляются:
 
 ```text
-baseline_uniform_low_quality.mp4
 roi_high_quality_region.mp4
 comparison_baseline_vs_roi.mp4
 roi_preview.png
+bitrate_windows.json
 report.json
+quality_roi_psnr.json      # только если --metrics=true и метрики посчитались
 ```
 
-Описание:
+`comparison_baseline_vs_roi.mp4` содержит:
 
-- `baseline_uniform_low_quality.mp4` — всё видео равномерно ухудшено.
-- `roi_high_quality_region.mp4` — периферия ухудшена, ROI оставлена из исходника.
-- `comparison_baseline_vs_roi.mp4` — сравнение side-by-side для защиты.
-- `roi_preview.png` — кадр с выделенной ROI.
-- `report.json` — параметры запуска, ROI, размеры файлов и примерный битрейт.
+- слева: `INPUT baseline`, то есть исходное видео;
+- справа: `ROI output`;
+- average/source bitrate, target/actual bitrate и размер файлов;
+- `current ... kbps` по временным окнам;
+- зелёную, оранжевую и красную разметку зон.
 
 ## Требования
 
-Нужно установить:
-
-- Go 1.22+
-- FFmpeg
-- FFprobe
+- Go;
+- FFmpeg;
+- FFprobe.
 
 Проверка:
 
@@ -40,136 +76,142 @@ ffmpeg -version
 ffprobe -version
 ```
 
-## Сборка
+Проект использует стандартную библиотеку Go и внешние процессы FFmpeg/FFprobe. В `go.mod` сейчас нет сторонних Go-зависимостей.
+
+## Сборка и тесты
 
 ```bash
 go build -o roi-poc ./cmd/roi
+go test ./...
+go test ./... -cover
+go vet ./...
 ```
 
-## Быстрый запуск на тестовом видео
+## Быстрый запуск
+
+Пример команды для локального теста на видео из `examples`:
 
 ```bash
-bash scripts/make_sample.sh
-go build -o roi-poc ./cmd/roi-poc
-./roi-poc --input sample_motion.mp4 --out demo_out --mode motion
+go build -o roi-poc ./cmd/roi
+
+./roi-poc \
+  --input examples/ball.mp4 \
+  --out out/ball_roi \
+  --mode static \
+  --roi 0.35,0.25,0.30,0.40 \
+  --target-bitrate 500k \
+  --bitrate-window 2 \
+  --metrics=false \
+  --encoder libx264
 ```
 
-Главный файл для показа на защите:
+Открывать для сравнения:
 
 ```text
-demo_out/comparison_baseline_vs_roi.mp4
+out/ball_roi/comparison_baseline_vs_roi.mp4
 ```
 
-## Запуск со статической ROI
+## ROI
 
-Можно задать ROI в пикселях:
+Статическая ROI в пикселях:
 
 ```bash
 ./roi-poc \
   --input input.mp4 \
-  --out demo_out_static \
+  --out out/static_pixels \
   --mode static \
   --roi 640,300,520,360
 ```
 
-Можно задать ROI долями кадра от `0` до `1`:
+Статическая ROI в долях кадра:
 
 ```bash
 ./roi-poc \
   --input input.mp4 \
-  --out demo_out_static \
+  --out out/static_fraction \
   --mode static \
   --roi 0.30,0.20,0.40,0.45
 ```
 
-Формат:
+Если `--mode static`, но `--roi` не задан, используется центральная ROI.
 
-```text
-x,y,w,h
-```
-
-Где:
-
-- `x` — координата левого верхнего угла ROI по X;
-- `y` — координата левого верхнего угла ROI по Y;
-- `w` — ширина ROI;
-- `h` — высота ROI.
-
-## Запуск с автоматическим motion ROI
+Motion ROI:
 
 ```bash
 ./roi-poc \
   --input input.mp4 \
-  --out demo_out_motion \
+  --out out/motion \
   --mode motion \
   --motion-window 0.7 \
-  --motion-threshold 34
+  --motion-threshold 34 \
+  --roi-margin 0.18
 ```
 
-Motion ROI работает просто:
+Motion режим извлекает два кадра, считает разницу яркости, строит bounding box изменившихся пикселей и расширяет его через `--roi-margin`. Это простая эвристика, а не CV/ML-детектор.
 
-1. программа извлекает два кадра;
-2. считает разницу яркости;
-3. строит bounding box изменившейся области;
-4. расширяет ROI через `--roi-margin`.
+## Битрейт и качество
 
-Это не production CV-модель, а минимальная проверка технической реализуемости.
+Основной режим:
 
-## Локальная демонстрация через HTTP
+```bash
+--roi-rate-control abr
+--target-bitrate 1000k
+```
+
+В ABR-режиме ROI output кодируется около заданного битрейта. Для `libx264` используется two-pass, если включён `--roi-two-pass=true`; для `h264_nvenc` используется single-pass ABR.
+
+Старое fixed-quality поведение можно включить так:
+
+```bash
+--roi-rate-control crf
+--roi-crf 16
+```
+
+При `--metrics=true` программа считает ROI-crop PSNR для baseline и ROI output через FFmpeg `psnr` filter и пишет `quality_roi_psnr.json`.
+
+## Энкодеры и GPU
+
+Флаг:
+
+```bash
+--encoder auto
+```
+
+Поведение:
+
+- `auto`: запускает `ffmpeg -hide_banner -encoders` через `exec.Command` и ищет `h264_nvenc` как отдельный token;
+- если `h264_nvenc` найден, используется NVIDIA NVENC;
+- если не найден, используется `libx264`;
+- `--encoder libx264` принудительно включает CPU encoding;
+- `--encoder h264_nvenc` завершится ошибкой, если FFmpeg не показывает этот энкодер.
+
+Для NVENC preset используется:
+
+```bash
+--nvenc-preset p4
+```
+
+## HTTP preview
 
 ```bash
 ./roi-poc \
   --input input.mp4 \
-  --out demo_out \
+  --out out/demo \
   --mode static \
   --serve
 ```
 
-Открыть в браузере:
+После обработки:
 
 ```text
 http://localhost:8080/comparison_baseline_vs_roi.mp4
 ```
 
-## Полезные параметры
-
-```bash
---periphery-scale 0.42
-```
-
-Насколько сильно понизить детализацию периферии. Чем меньше число, тем сильнее деградация.
-
-```bash
---blur 2
-```
-
-Сила blur для периферии.
-
-```bash
---crf 23
-```
-
-CRF финального H.264 файла. Меньше — лучше качество и больше размер.
-
-```bash
---preset veryfast
-```
-
-Preset x264.
-
-```bash
---roi-margin 0.18
-```
-
-Расширение автоматически найденной motion ROI.
-
-```bash
---keep-temp
-```
-
-Не удалять временные кадры, которые используются для поиска движения.
+Адрес меняется через `--http`, например `--http :9090`.
 
 ## Docker
+
+Docker здесь нужен не для алгоритма, а для воспроизводимого окружения: собрать Go CLI и получить runtime с FFmpeg/FFprobe без ручной установки на машине.
 
 Сборка:
 
@@ -181,36 +223,73 @@ docker build -t roi-poc .
 
 ```bash
 docker run --rm -v "$PWD:/work" roi-poc \
-  --input sample_motion.mp4 \
-  --out demo_out \
-  --mode motion
+  --input examples/ball.mp4 \
+  --out out/docker_ball \
+  --mode static \
+  --target-bitrate 500k
 ```
 
-## Как защищать PoC
+GPU в Docker требует NVIDIA runtime на хосте и доступного NVENC в FFmpeg:
 
-1. Показать `roi_preview.png`: ROI найдена или задана.
-2. Показать `baseline_uniform_low_quality.mp4`: обычное равномерное ухудшение.
-3. Показать `roi_high_quality_region.mp4`: ROI остаётся чёткой, периферия хуже.
-4. Показать `comparison_baseline_vs_roi.mp4`: основной side-by-side результат.
-5. Открыть `report.json`: параметры эксперимента и размеры файлов.
+```bash
+docker run --rm --gpus all -v "$PWD:/work" roi-poc \
+  --input examples/ball.mp4 \
+  --out out/docker_nvenc \
+  --encoder h264_nvenc \
+  --target-bitrate 500k
+```
 
-## Что говорить на защите
+## Структура проекта
 
-Этот PoC показывает техническую реализуемость идеи ROI-based video streaming.
+```text
+├── Dockerfile                      multi-stage build + FFmpeg runtime
+├── README.md
+├── docs
+│   └── ...    
+├── cmd
+│   └── roi
+│       └── main.go                 CLI entrypoint
+└── internal
+    └── roi
+        ├── app.go                  основной orchestration pipeline
+        ├── bitrate.go              bitrate windows по ffprobe packets
+        ├── bitrate_test.go         
+        ├── cli.go                  CLI flags
+        ├── config.go               validation
+        ├── config_test.go          
+        ├── encode.go               ROI candidates, fitting, FFmpeg filter graph
+        ├── encoder.go              выбор libx264/NVENC и encoder args
+        ├── encoder_test.go         
+        ├── exec.go                 
+        ├── files.go                
+        ├── metrics.go              ROI PSNR
+        ├── metrics_test.go         
+        ├── probe.go                ffprobe metadata
+        ├── probe_test.go           
+        ├── render.go               preview и side-by-side comparison
+        ├── render_test.go          
+        ├── roi.go                  static/motion ROI selection
+        ├── roi_test.go             
+        ├── selection.go            выбор лучшего кандидата
+        ├── selection_test.go       
+        ├── server.go               локальный HTTP server
+        └── types.go                
+```
 
-В нём уже есть:
+## Используемые технологии
 
-- входной видеопоток;
-- автоматическая или ручная ROI;
-- разное качество внутри кадра;
-- baseline для сравнения;
-- демонстрационное видео;
-- отчёт с параметрами запуска.
+- Go CLI: orchestration, validation, JSON reports, unit tests.
+- FFmpeg filters: `split`, `scale`, `crop`, `overlay`, `boxblur`, `drawbox`, `drawtext`, `psnr`.
+- FFprobe: metadata, packet sizes, bitrate windows.
+- H.264 encoders: `libx264` или `h264_nvenc`.
+- Docker: воспроизводимый запуск и демонстрация.
 
-Ограничение: это mask-based PoC, а не настоящая интеграция с QP-map энкодером.
+Для текущего PoC стек уместный: большая часть тяжёлой видеообработки отдана FFmpeg, а Go держит конфигурацию, выбор кандидатов и отчёты. Лишняя работа для production streaming есть только в демонстрационной части: перебор нескольких encode-кандидатов, финальный side-by-side render и PSNR-метрики. Для офлайн-защиты это полезно; в realtime pipeline эти шаги нужно заменить на encoder-level ROI/QP-map и потоковую доставку.
 
-На следующем этапе этот ROI-блок можно использовать как источник карты качества для:
+## Ограничения
 
-- SVT-AV1 RoiMapFile / QP Offset Map;
-- Kvazaar `--roi`;
-- libaom `AOME_SET_ROI_MAP`.
+- Одна прямоугольная ROI.
+- Motion ROI основан на разнице двух кадров.
+- ROI сохраняется через mask/overlay preprocessing, а не через QP-map энкодера.
+- Нет WebRTC/DASH/RTSP delivery pipeline.
+- Нет object detection, saliency map и динамической ROI на каждом кадре.

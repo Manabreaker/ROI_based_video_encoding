@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY go.mod ./
 COPY cmd ./cmd
+COPY internal ./internal
 
 # Build the CLI from the package that exists in this repository.
 RUN CGO_ENABLED=0 go build -o /roi-poc ./cmd/roi

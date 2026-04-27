@@ -1,708 +1,250 @@
-# ROI Video Streaming PoC на Go
+# ROI Video Streaming PoC
 
-PoC для проекта **ROI-based video streaming**.
+Этот документ описывает текущее состояние проекта по коду. `docs/research.md` не является источником этого описания.
 
-Цель PoC — показать техническую реализуемость идеи: система получает видео, выделяет область интереса (**ROI, Region of Interest**) и применяет разное качество внутри одного кадра:
+## Назначение
 
-- ROI остаётся в высоком качестве;
-- периферия кадра ухудшается;
-- дополнительно создаётся baseline-вариант, где весь кадр ухудшен равномерно;
-- результат можно сравнить side-by-side.
+Проект демонстрирует ROI-based video streaming на уровне PoC:
 
-Этот PoC соответствует Этапу 3 проекта: демонстрация выделения ROI и управления качеством на уровне областей кадра.
+- входное видео остаётся baseline и не перекодируется;
+- ROI output кодируется с приоритетом качества в выбранной области;
+- вокруг ROI есть средняя зона, чтобы не было резкого разрыва качества;
+- периферия ухудшается сильнее для экономии битрейта;
+- comparison-видео показывает baseline и ROI output side-by-side с текущим битрейтом.
 
----
+Это mask-based preprocessing через FFmpeg, а не настоящая encoder-level ROI/QP-map реализация.
 
-## 1. Идея проекта
-
-Обычное видеокодирование распределяет качество по кадру относительно равномерно. При ограниченном битрейте это приводит к тому, что важные области, например лицо, объект, зона движения или зона взгляда пользователя, тоже теряют качество.
-
-ROI-based streaming решает эту проблему иначе:
-
-```text
-важная область кадра -> больше качества
-остальная часть кадра -> меньше качества
-```
-
-В результате можно сохранить воспринимаемое качество в важных областях при меньшем расходе битрейта.
-
----
-
-## 2. Что делает текущий PoC
-
-Текущая версия — это **mask-based PoC**, а не финальная encoder-level реализация через QP-map.
-
-Программа делает следующее:
-
-1. Читает входное видео.
-2. Получает параметры видео через `ffprobe`.
-3. Выбирает ROI:
-  - вручную через координаты;
-  - автоматически через простую детекцию движения;
-  - по центру кадра, если ROI не задана.
-4. Создаёт baseline-видео:
-  - весь кадр ухудшен равномерно.
-5. Создаёт ROI-видео:
-  - периферия ухудшена;
-  - ROI вставлена из оригинального видео.
-6. Создаёт side-by-side comparison:
-  - слева baseline;
-  - справа ROI-вариант.
-7. Генерирует `report.json` с параметрами эксперимента.
-
----
-
-## 3. Архитектура
-
-### 3.1 Общий pipeline
-
-```mermaid
-flowchart LR
-    A["Input video<br/>file / camera / RTSP"] --> B["ffprobe<br/>video metadata"]
-
-    B --> C{"ROI selector"}
-
-    C -->|manual coordinates| D["Static ROI"]
-    C -->|frame difference| E["Motion ROI"]
-    C -->|default fallback| F["Center ROI"]
-
-    D --> G["ROI config<br/>x, y, w, h"]
-    E --> G
-    F --> G
-
-    G --> H["FFmpeg processing"]
-
-    H --> I["Baseline renderer<br/>uniform low quality"]
-    H --> J["ROI renderer<br/>high quality ROI + degraded periphery"]
-
-    I --> K["baseline_uniform_low_quality.mp4"]
-    J --> L["roi_high_quality_region.mp4"]
-
-    K --> M["Comparison renderer"]
-    L --> M
-
-    M --> N["comparison_baseline_vs_roi.mp4"]
-
-    G --> O["Preview renderer"]
-    O --> P["roi_preview.png"]
-
-    K --> Q["report.json"]
-    L --> Q
-    N --> Q
-    P --> Q
-```
-
----
-
-### 3.2 Логика обработки ROI-видео
+## Pipeline
 
 ```mermaid
 flowchart TD
-    A["Original input frame"] --> B["Split frame"]
-
-    B --> C["Branch A:<br/>degraded background"]
-    B --> D["Branch B:<br/>original ROI crop"]
-
-    C --> C1["Downscale"]
-    C1 --> C2["Upscale"]
-    C2 --> C3["Blur"]
-    C3 --> E["Low-quality full frame"]
-
-    D --> D1["Crop ROI<br/>x, y, w, h"]
-    D1 --> F["High-quality ROI"]
-
-    E --> G["Overlay ROI on degraded frame"]
-    F --> G
-
-    G --> H["Draw ROI border"]
-    H --> I["Output ROI video"]
+    A["CLI flags"] --> B["validateConfig"]
+    B --> C["ensure ffmpeg / ffprobe"]
+    C --> D["resolveVideoEncoder"]
+    D --> E["probeVideo"]
+    E --> F["selectROI"]
+    F --> G["fitROIToTarget"]
+    G --> H["computeBitrateWindows"]
+    H --> I["renderComparison"]
+    I --> J["renderPreview"]
+    J --> K["computeQualityReport"]
+    K --> L["report.json"]
 ```
 
----
+Фактический порядок находится в `internal/roi/app.go`.
 
-### 3.3 Сравнение baseline и ROI-подхода
+## ROI output
+
+`internal/roi/encode.go` строит FFmpeg filter graph в `buildROIFilter`:
 
 ```mermaid
-flowchart LR
-    A["Input video"] --> B["Baseline path"]
-    A --> C["ROI path"]
-
-    B --> B1["Whole frame degraded"]
-    B1 --> B2["baseline_uniform_low_quality.mp4"]
-
-    C --> C1["Periphery degraded"]
-    C --> C2["ROI kept from original"]
-    C1 --> C3["Overlay"]
-    C2 --> C3
-    C3 --> C4["roi_high_quality_region.mp4"]
-
-    B2 --> D["Side-by-side comparison"]
-    C4 --> D
-
-    D --> E["comparison_baseline_vs_roi.mp4"]
+flowchart TD
+    A["input frame"] --> B["split=3"]
+    B --> C["low source"]
+    B --> D["middle source"]
+    B --> E["ROI source"]
+    C --> C1["scale down/up + blur"]
+    D --> D1["milder scale/blur + crop middle ROI"]
+    E --> E1["crop original ROI"]
+    C1 --> F["low full frame"]
+    F --> G["overlay middle ring"]
+    D1 --> G
+    G --> H["overlay original ROI"]
+    E1 --> H
+    H --> I["roi_high_quality_region.mp4"]
 ```
 
----
+Зоны на финальном comparison:
 
-## 4. Структура проекта
+| Цвет      | Что означает                              |
+|-----------|-------------------------------------------|
+| 🟩 Green  | ROI, исходный crop перед финальным encode |
+| 🟨 Orange | middle ring, среднее качество             |
+| 🟥 Red    | low periphery, самое низкое качество      |
+
+## Outputs
 
 ```text
-roi-go-poc/
-  go.mod
-  README.md
-  Dockerfile
-
-  cmd/
-    roi-poc/
-      main.go
-      server.go
-
-  scripts/
-    make_sample.sh
-
-  docs/
-    ARCHITECTURE.md
+roi_high_quality_region.mp4
+comparison_baseline_vs_roi.mp4
+roi_preview.png
+bitrate_windows.json
+report.json
+quality_roi_psnr.json      # optional, when --metrics=true
 ```
 
-Описание основных файлов:
+`baseline_uniform_low_quality.mp4` больше не создаётся. Baseline в отчётах и comparison-видео - это исходный input.
 
-| Файл | Назначение |
-|---|---|
-| `cmd/roi-poc/main.go` | Основная CLI-программа: probing, ROI selection, FFmpeg pipeline, report |
-| `cmd/roi-poc/server.go` | Простой HTTP-сервер для локального просмотра результатов |
-| `scripts/make_sample.sh` | Генерация тестового видео с движущимся объектом |
-| `Dockerfile` | Запуск PoC в контейнере |
-| `docs/ARCHITECTURE.md` | Дополнительное описание архитектуры |
+## CLI examples
 
----
-
-## 5. Требования
-
-Нужно установить:
-
-- Go 1.22 или новее;
-- FFmpeg;
-- FFprobe.
-
-Проверка:
+Сборка:
 
 ```bash
-go version
-ffmpeg -version
-ffprobe -version
+go build -o roi-poc ./cmd/roi
 ```
 
----
-
-## 6. Сборка
-
-Из корня проекта:
+Быстрый тест:
 
 ```bash
-go build -o roi-poc ./cmd/roi-poc
-```
-
-После сборки появится исполняемый файл:
-
-```text
-roi-poc
-```
-
----
-
-## 7. Быстрый запуск на тестовом видео
-
-Сначала сгенерируй тестовое видео:
-
-```bash
-chmod +x scripts/make_sample.sh
-bash scripts/make_sample.sh
-```
-
-Затем собери и запусти PoC:
-
-```bash
-go build -o roi-poc ./cmd/roi-poc
-
 ./roi-poc \
-  --input sample_motion.mp4 \
-  --out demo_out \
-  --mode motion
+  --input examples/ball.mp4 \
+  --out out/ball_roi \
+  --mode static \
+  --roi 0.35,0.25,0.30,0.40 \
+  --target-bitrate 500k \
+  --bitrate-window 2 \
+  --metrics=false \
+  --encoder libx264
 ```
 
-После выполнения в папке `demo_out` появятся результаты.
-
----
-
-## 8. Результаты работы
-
-Программа создаёт следующие файлы:
-
-```text
-demo_out/
-  baseline_uniform_low_quality.mp4
-  roi_high_quality_region.mp4
-  comparison_baseline_vs_roi.mp4
-  roi_preview.png
-  report.json
-```
-
-Описание:
-
-| Файл | Что показывает |
-|---|---|
-| `baseline_uniform_low_quality.mp4` | Весь кадр ухудшен равномерно |
-| `roi_high_quality_region.mp4` | ROI сохранена в высоком качестве, периферия ухудшена |
-| `comparison_baseline_vs_roi.mp4` | Главное видео для защиты: baseline vs ROI |
-| `roi_preview.png` | Кадр с выделенной ROI |
-| `report.json` | Параметры запуска, размер файлов, ROI, примерный битрейт |
-
-Главный файл для демонстрации:
-
-```text
-demo_out/comparison_baseline_vs_roi.mp4
-```
-
----
-
-## 9. Режимы выбора ROI
-
-### 9.1 Автоматическая ROI по движению
+Motion ROI:
 
 ```bash
 ./roi-poc \
   --input input.mp4 \
-  --out demo_motion \
-  --mode motion
-```
-
-В этом режиме программа:
-
-1. извлекает два кадра из видео;
-2. считает разницу яркости;
-3. находит область, где есть заметные изменения;
-4. строит bounding box;
-5. расширяет его через `--roi-margin`.
-
-Дополнительные параметры:
-
-```bash
-./roi-poc \
-  --input input.mp4 \
-  --out demo_motion \
+  --out out/motion \
   --mode motion \
   --motion-window 0.7 \
   --motion-threshold 34 \
   --roi-margin 0.18
 ```
 
-Параметры:
-
-| Параметр | Значение |
-|---|---|
-| `--motion-window` | Временной промежуток между кадрами для анализа движения |
-| `--motion-threshold` | Порог разницы яркости |
-| `--roi-margin` | Расширение найденной области ROI |
-
----
-
-### 9.2 Статическая ROI в пикселях
+NVENC:
 
 ```bash
 ./roi-poc \
   --input input.mp4 \
-  --out demo_static \
-  --mode static \
-  --roi 640,300,520,360
+  --out out/nvenc \
+  --encoder h264_nvenc \
+  --nvenc-preset p4 \
+  --target-bitrate 800k
 ```
 
-Формат:
+## Important flags
+
+| Flag                 |  Default | Meaning                                   |
+|----------------------|---------:|-------------------------------------------|
+| `--input`            |        - | FFmpeg-readable source                    |
+| `--out`              |    `out` | output directory                          |
+| `--mode`             | `static` | `static` or `motion`                      |
+| `--roi`              |        - | `x,y,w,h`, pixels or fractions            |
+| `--target-bitrate`   |  `1000k` | target ROI output bitrate                 |
+| `--fit-roi`          |   `true` | try candidates near target bitrate        |
+| `--roi-rate-control` |    `abr` | `abr` or `crf`                            |
+| `--roi-crf`          |     `16` | fixed-quality CRF / high quality baseline |
+| `--middle-margin`    |   `0.35` | orange ring expansion                     |
+| `--middle-scale`     |   `0.67` | orange ring scale                         |
+| `--middle-blur`      |      `1` | orange ring blur                          |
+| `--periphery-scale`  |   `0.35` | red zone scale when fitting is disabled   |
+| `--blur`             |      `2` | red zone blur when fitting is disabled    |
+| `--encoder`          |   `auto` | `auto`, `libx264`, `h264_nvenc`           |
+| `--overlay-bitrate`  |   `true` | draw current bitrate labels               |
+| `--bitrate-window`   |    `1.0` | seconds per bitrate window                |
+| `--metrics`          |   `true` | compute ROI PSNR report                   |
+| `--serve`            |  `false` | start local HTTP server                   |
+
+## Encoder selection
+
+`internal/roi/encoder.go` выбирает видео энкодер на основе флага `--encoder`:
+
+- `--encoder auto` проверяет FFmpeg энкодеры используя `exec.Command("ffmpeg", "-hide_banner", "-encoders")`;
+- если `h264_nvenc` доступен на текущей машине, NVENC будет использоваться для кодирования;
+- иначе используется как дефолтный вариант `libx264`;
+- дополнительно `--encoder h264_nvenc` выдает однозначную ошибку если FFmpeg не поддерживает его.
+
+`libx264` поддерживает двухпроходный ABR-путь, используемый флагом `--roi-rate-control abr`. NVENC использует однопроходный путь с целевым битрейтом.
+
+## Project layout
 
 ```text
-x,y,w,h
+├── Dockerfile
+├── README.md
+├── docs
+│   └── ...    
+├── cmd
+│   └── roi
+│       └── main.go
+└── internal
+    └── roi
+        ├── app.go
+        ├── bitrate.go
+        ├── bitrate_test.go
+        ├── cli.go
+        ├── config.go
+        ├── config_test.go
+        ├── encode.go
+        ├── encoder.go
+        ├── encoder_test.go
+        ├── exec.go
+        ├── files.go
+        ├── metrics.go
+        ├── metrics_test.go
+        ├── probe.go
+        ├── probe_test.go
+        ├── render.go
+        ├── render_test.go
+        ├── roi.go
+        ├── roi_test.go
+        ├── selection.go
+        ├── selection_test.go
+        ├── server.go
+        └── types.go
 ```
 
-Где:
-
-| Параметр | Значение |
-|---|---|
-| `x` | Координата левого верхнего угла по X |
-| `y` | Координата левого верхнего угла по Y |
-| `w` | Ширина ROI |
-| `h` | Высота ROI |
-
----
-
-### 9.3 Статическая ROI в долях кадра
-
-Можно задавать ROI не в пикселях, а в долях от размера кадра:
+## Tests
 
 ```bash
-./roi-poc \
-  --input input.mp4 \
-  --out demo_static_fraction \
-  --mode static \
-  --roi 0.30,0.20,0.40,0.45
+go test ./...
+go test ./... -cover
+go vet ./...
 ```
 
-Это означает:
+Модульные тесты покрывают парсинг, валидацию конфигурации, выбор аргументов кодировщика, расчёт ROI, сводки по битрейту, парсинг метрик, экранирование текста при рендеринге и выбор кандидатов.
 
-```text
-x = 30% ширины кадра
-y = 20% высоты кадра
-w = 40% ширины кадра
-h = 45% высоты кадра
-```
+## Docker
 
----
+Dockerfile использует многоэтапную сборку:
 
-### 9.4 ROI по центру кадра
+1. `golang:1.26-bookworm` собирает `/roi-poc` из `./cmd/roi`.
+2. `debian:bookworm-slim` устанавливает `ffmpeg` и `ca-certificates`.
+3. Финальный образ запускает `roi-poc` в `/work`.
 
-Если режим `static` указан, но координаты ROI не переданы, программа использует центральную область кадра:
-
-```bash
-./roi-poc \
-  --input input.mp4 \
-  --out demo_center \
-  --mode static
-```
-
----
-
-## 10. Настройка качества
-
-### 10.1 Сила деградации периферии
-
-```bash
---periphery-scale 0.42
-```
-
-Чем меньше значение, тем сильнее ухудшается периферия.
-
-Пример более сильной деградации:
-
-```bash
-./roi-poc \
-  --input input.mp4 \
-  --out demo_low_periphery \
-  --mode static \
-  --roi 0.30,0.20,0.40,0.45 \
-  --periphery-scale 0.25
-```
-
----
-
-### 10.2 Blur периферии
-
-```bash
---blur 2
-```
-
-Чем больше значение, тем сильнее размытие.
-
-Пример:
-
-```bash
-./roi-poc \
-  --input input.mp4 \
-  --out demo_blur \
-  --mode static \
-  --roi 0.30,0.20,0.40,0.45 \
-  --blur 4
-```
-
----
-
-### 10.3 CRF итогового файла
-
-```bash
---crf 23
-```
-
-CRF управляет качеством итогового H.264-файла:
-
-- меньше CRF — выше качество и больше размер;
-- больше CRF — ниже качество и меньше размер.
-
-Пример:
-
-```bash
-./roi-poc \
-  --input input.mp4 \
-  --out demo_crf \
-  --mode motion \
-  --crf 24
-```
-
----
-
-## 11. Локальная демонстрация через браузер
-
-Можно запустить HTTP-сервер после обработки:
-
-```bash
-./roi-poc \
-  --input input.mp4 \
-  --out demo_out \
-  --mode motion \
-  --serve
-```
-
-После запуска открыть:
-
-```text
-http://localhost:8080/comparison_baseline_vs_roi.mp4
-```
-
-Можно изменить адрес:
-
-```bash
-./roi-poc \
-  --input input.mp4 \
-  --out demo_out \
-  --mode motion \
-  --serve \
-  --http :9090
-```
-
-Тогда открыть:
-
-```text
-http://localhost:9090/comparison_baseline_vs_roi.mp4
-```
-
----
-
-## 12. Запуск через Docker
-
-Сборка Docker-образа:
+Docker полезен для воспроизводимых демонстраций и для машин без локально настроенных Go/FFmpeg. Для самого алгоритма он не требуется.
 
 ```bash
 docker build -t roi-poc .
-```
 
-Запуск:
-
-```bash
 docker run --rm -v "$PWD:/work" roi-poc \
-  --input sample_motion.mp4 \
-  --out demo_out \
-  --mode motion
+  --input examples/ball.mp4 \
+  --out out/docker_ball \
+  --target-bitrate 500k
 ```
 
-Для своего видео:
+Для GPU-кодирования внутри Docker хост должен предоставлять NVIDIA runtime и устройства:
 
 ```bash
-docker run --rm -v "$PWD:/work" roi-poc \
-  --input input.mp4 \
-  --out demo_out \
-  --mode static \
-  --roi 0.30,0.20,0.40,0.45
+docker run --rm --gpus all -v "$PWD:/work" roi-poc \
+  --input examples/ball.mp4 \
+  --out out/docker_nvenc \
+  --encoder h264_nvenc
 ```
 
----
+## Соответствие технологий
 
-## 13. Пример полного запуска для защиты
+Этот стек разумен для данного PoC:
 
-```bash
-chmod +x scripts/make_sample.sh
-bash scripts/make_sample.sh
+* Go упрощает оркестрацию, валидацию, отчёты и модульные тесты.
+* FFmpeg — подходящий инструмент для детерминированных локальных преобразований видео.
+* FFprobe даёт данные на уровне пакетов для окон битрейта.
+* Docker упаковывает runtime для повторяемых демонстраций.
 
-go build -o roi-poc ./cmd/roi-poc
+Ресурсоёмкие части являются намеренной демонстрационной работой: повторное кодирование кандидатов во время подбора, side-by-side рендеринг и опциональные метрики PSNR. В production-пайплайне стриминга они были бы заменены или перенесены в offline-часть; online-путь должен использовать ROI-контроль на уровне кодировщика, QP maps, tiles или протокол адаптивного стриминга.
 
-./roi-poc \
-  --input sample_motion.mp4 \
-  --out defense_demo \
-  --mode motion \
-  --periphery-scale 0.35 \
-  --blur 3 \
-  --crf 23
-```
+## Текущие ограничения
 
-Открыть:
-
-```text
-defense_demo/comparison_baseline_vs_roi.mp4
-```
-
-Также можно показать:
-
-```text
-defense_demo/roi_preview.png
-defense_demo/report.json
-```
-
----
-
-## 14. Что показывать на защите
-
-Рекомендуемый порядок демонстрации:
-
-1. Показать исходную идею:
-  - при ограниченном битрейте не все области кадра одинаково важны.
-2. Показать `roi_preview.png`:
-  - система выделила ROI.
-3. Показать `baseline_uniform_low_quality.mp4`:
-  - обычный подход ухудшает весь кадр.
-4. Показать `roi_high_quality_region.mp4`:
-  - ROI остаётся качественной, периферия ухудшается.
-5. Показать `comparison_baseline_vs_roi.mp4`:
-  - наглядное сравнение baseline и ROI-подхода.
-6. Показать `report.json`:
-  - параметры эксперимента и размеры выходных файлов.
-
----
-
-## 15. Что говорить на защите
-
-Короткое объяснение:
-
-> Этот PoC демонстрирует принцип ROI-based video streaming. Вместо равномерного распределения качества по всему кадру система выделяет область интереса и сохраняет её в высоком качестве, снижая детализацию периферии. Это позволяет показать, как можно экономить битрейт без сильной потери воспринимаемого качества в важных областях.
-
-Важно уточнить:
-
-> Текущая версия — это mask-based PoC. Она показывает техническую реализуемость идеи. На следующем этапе этот механизм можно заменить на encoder-level управление качеством через QP-map, ROI-map или tiles.
-
----
-
-## 16. Ограничения текущего PoC
-
-Текущая версия специально сделана простой и воспроизводимой.
-
-Ограничения:
-
-- используется одна ROI;
-- motion detection простой и не является полноценной CV-моделью;
-- качество меняется через FFmpeg mask/overlay pipeline;
-- нет настоящей интеграции с QP-map энкодером;
-- нет WebRTC/DASH-доставки;
-- нет saliency/object detection;
-- нет динамической ROI на каждом кадре в реальном времени.
-
----
-
-## 17. Связь с будущим прототипом
-
-Текущий PoC можно развивать в полноценный прототип.
-
-```mermaid
-flowchart TD
-    A["Current PoC<br/>mask-based ROI"] --> B["Multiple ROI support"]
-    B --> C["Object detection<br/>OpenCV / ML model"]
-    C --> D["Dynamic ROI update<br/>per frame / per segment"]
-    D --> E["Encoder-level control"]
-
-    E --> F["SVT-AV1<br/>QP Offset Map"]
-    E --> G["Kvazaar HEVC<br/>delta-QP ROI map"]
-    E --> H["libaom AV1<br/>AOME_SET_ROI_MAP"]
-
-    F --> I["Streaming output"]
-    G --> I
-    H --> I
-
-    I --> J["WebRTC / RTSP / DASH"]
-    J --> K["MVP"]
-```
-
----
-
-## 18. Возможное развитие
-
-Следующие шаги:
-
-1. Добавить несколько ROI одновременно.
-2. Добавить object detection:
-  - лицо;
-  - человек;
-  - автомобиль;
-  - выбранный объект.
-3. Добавить saliency map.
-4. Реализовать динамическое обновление ROI во времени.
-5. Генерировать QP-map.
-6. Подключить encoder-level ROI:
-  - SVT-AV1;
-  - Kvazaar;
-  - libaom.
-7. Добавить streaming output:
-  - RTSP;
-  - WebRTC;
-  - DASH.
-8. Добавить метрики:
-  - bitrate;
-  - ROI-PSNR;
-  - ROI-SSIM;
-  - ROI-VMAF;
-  - latency.
-
----
-
-## 19. CLI-параметры
-
-| Параметр             | По умолчанию | Описание                                                  |
-|----------------------|-------------:|-----------------------------------------------------------|
-| `--input`            |            — | Входное видео, RTSP URL или другой FFmpeg-readable source |
-| `--out`              |        `out` | Папка для результатов                                     |
-| `--mode`             |     `static` | Режим ROI: `static` или `motion`                          |
-| `--roi`              |            — | ROI в формате `x,y,w,h`, в пикселях или долях кадра       |
-| `--periphery-scale`  |       `0.42` | Насколько уменьшать периферию перед обратным upscale      |
-| `--blur`             |          `2` | Радиус blur для периферии                                 |
-| `--crf`              |         `23` | CRF итогового H.264-видео                                 |
-| `--preset`           |   `veryfast` | x264 preset                                               |
-| `--motion-window`    |        `0.6` | Интервал между кадрами для motion ROI                     |
-| `--motion-threshold` |         `34` | Порог разницы яркости                                     |
-| `--roi-margin`       |       `0.18` | Расширение найденной motion ROI                           |
-| `--serve`            |      `false` | Запустить HTTP-сервер после обработки                     |
-| `--http`             |      `:8080` | Адрес HTTP-сервера                                        |
-| `--keep-temp`        |      `false` | Не удалять временные кадры                                |
-
----
-
-## 20. Пример `report.json`
-
-Примерная структура отчёта:
-
-```json
-{
-  "created_at": "2026-02-21T12:00:00+03:00",
-  "input": "sample_motion.mp4",
-  "mode": "motion",
-  "video": {
-    "width": 1280,
-    "height": 720,
-    "duration_seconds": 8,
-    "fps": 30
-  },
-  "roi": {
-    "x": 96,
-    "y": 216,
-    "w": 480,
-    "h": 184,
-    "source": "motion-diff"
-  },
-  "artifacts": [
-    {
-      "path": "demo_out/baseline_uniform_low_quality.mp4",
-      "size_bytes": 123456,
-      "bitrate_kbps": 123.45
-    }
-  ],
-  "notes": [
-    "PoC uses mask-based spatial quality redistribution.",
-    "This demonstrates Stage 3 feasibility before moving to encoder-level QP/ROI maps."
-  ]
-}
-```
-
----
-
-## 21. Краткий вывод
-
-Этот PoC показывает, что ROI-based streaming можно реализовать как воспроизводимый pipeline:
-
-```text
-input video -> ROI selection -> different quality per region -> comparison output
-```
-
-Для Этапа 3 этого достаточно: есть выделение ROI, управление качеством по областям кадра, baseline-сравнение, видео для демонстрации и отчёт.
-
-Дальнейшее развитие — переход от mask-based обработки к настоящему encoder-level ROI через QP-map, ROI-map или tile-based delivery.
+* только одна прямоугольная ROI;
+* motion ROI использует разницу яркости между двумя кадрами;
+* нет детекции объектов или модели saliency;
+* нет realtime-отслеживания ROI по кадрам;
+* нет слоя доставки WebRTC/DASH/RTSP;
+* качество ROI сохраняется за счёт preprocessing перед финальным кодированием, а не за счёт настоящего per-block контроля кодировщика.

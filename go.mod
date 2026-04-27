@@ -1,1 +1,1 @@
-module roi-based-video-streaming
+module github.com/Manabreaker/ROI_based_video_streaming
