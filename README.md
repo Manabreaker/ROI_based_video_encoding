@@ -56,6 +56,40 @@ go build -o roi-poc ./cmd/roi
 out/ball_roi/comparison_baseline_vs_roi.mp4
 ```
 
+## Запуск через YAML config
+
+Любой CLI-флаг можно перенести в YAML-файл: ключи называются так же, как флаги, но без `--`.
+
+```yaml
+input: examples/ball.mp4
+out: out/ball_roi
+mode: static
+roi: 0.35,0.25,0.30,0.40
+target-bitrate: 500k
+bitrate-window: 2
+metrics: false
+encoder: libx264
+fit-iterations: 5
+```
+
+Запуск:
+
+```bash
+./roi-poc --config roi.yaml
+```
+
+Также можно передать YAML как позиционный аргумент:
+
+```bash
+./roi-poc roi.yaml
+```
+
+Если значение указано и в YAML, и во флагах, побеждает флаг:
+
+```bash
+./roi-poc --config roi.yaml --target-bitrate 800k --metrics=true
+```
+
 ## Что появится в output-директории
 
 После успешного запуска в `--out` создаются:
@@ -174,6 +208,7 @@ Fixed-quality режим:
 | Флаг                 | По умолчанию | Назначение                                                     |
 |----------------------|--------------|----------------------------------------------------------------|
 | `--input`            | -            | входной видеофайл, URL, RTSP или другой FFmpeg-readable source |
+| `--config`           | -            | YAML config; явно переданные флаги имеют приоритет             |
 | `--out`              | `out`        | директория для результата                                      |
 | `--mode`             | `static`     | режим ROI: `static` или `motion`                               |
 | `--roi`              | -            | ROI как `x,y,w,h`, в пикселях или долях кадра                  |

@@ -3,63 +3,63 @@ package roi
 // Config holds CLI options for input/output, ROI selection, encoding, metrics, and serving.
 type Config struct {
 	// Input/output.
-	Input  string
-	OutDir string
+	Input  string `yaml:"input"`
+	OutDir string `yaml:"out"`
 
 	// ROI selection.
-	Mode      string
-	ROIString string
+	Mode      string `yaml:"mode"`
+	ROIString string `yaml:"roi"`
 
 	// Bitrate target for the generated ROI output.
-	TargetBitrate string
-	Tolerance     float64
+	TargetBitrate string  `yaml:"target-bitrate"`
+	Tolerance     float64 `yaml:"tolerance"`
 
 	// ROI quality policy.
-	FitROI              bool
-	ROIHighQualityCRF   int
-	ROIMinCRF           int
-	ROIMaxCRFIfNeeded   int
-	AllowROIQualityLoss bool
+	FitROI              bool `yaml:"fit-roi"`
+	ROIHighQualityCRF   int  `yaml:"roi-crf"`
+	ROIMinCRF           int  `yaml:"roi-min-crf"`
+	ROIMaxCRFIfNeeded   int  `yaml:"roi-max-crf-if-needed"`
+	AllowROIQualityLoss bool `yaml:"allow-roi-quality-loss"`
 
 	// Periphery degradation settings.
-	ManualPeripheryScale float64
-	ManualBlurRadius     int
-	MiddleMargin         float64
-	MiddleScale          float64
-	MiddleBlurRadius     int
-	ROIMinScale          float64
-	ROIMaxBlur           int
+	ManualPeripheryScale float64 `yaml:"periphery-scale"`
+	ManualBlurRadius     int     `yaml:"blur"`
+	MiddleMargin         float64 `yaml:"middle-margin"`
+	MiddleScale          float64 `yaml:"middle-scale"`
+	MiddleBlurRadius     int     `yaml:"middle-blur"`
+	ROIMinScale          float64 `yaml:"roi-min-scale"`
+	ROIMaxBlur           int     `yaml:"roi-max-blur"`
 
 	// ROI encoder rate control and candidate scoring.
-	ROIRateControl       string
-	ROITwoPass           bool
-	ROIFitMetric         bool
-	ROIPSNRTieDB         float64
-	ROIMaxrateMultiplier float64
-	ROIBufsizeSeconds    float64
+	ROIRateControl       string  `yaml:"roi-rate-control"`
+	ROITwoPass           bool    `yaml:"roi-two-pass"`
+	ROIFitMetric         bool    `yaml:"roi-fit-metric"`
+	ROIPSNRTieDB         float64 `yaml:"roi-psnr-tie-db"`
+	ROIMaxrateMultiplier float64 `yaml:"roi-maxrate-multiplier"`
+	ROIBufsizeSeconds    float64 `yaml:"roi-bufsize-seconds"`
 
 	// Encoder tuning.
-	VideoEncoder  string
-	Preset        string
-	NVENCPreset   string
-	FitIterations int
+	VideoEncoder  string `yaml:"encoder"`
+	Preset        string `yaml:"preset"`
+	NVENCPreset   string `yaml:"nvenc-preset"`
+	FitIterations int    `yaml:"fit-iterations"`
 
 	// Motion-based ROI detection.
-	MotionWindow float64
-	MotionThresh int
-	ROIMargin    float64
+	MotionWindow float64 `yaml:"motion-window"`
+	MotionThresh int     `yaml:"motion-threshold"`
+	ROIMargin    float64 `yaml:"roi-margin"`
 
 	// Dynamic bitrate overlay.
-	OverlayBitrate     bool
-	BitrateWindow      float64
-	MaxBitrateOverlays int
+	OverlayBitrate     bool    `yaml:"overlay-bitrate"`
+	BitrateWindow      float64 `yaml:"bitrate-window"`
+	MaxBitrateOverlays int     `yaml:"max-bitrate-overlays"`
 
 	// Reports and local preview server.
-	Metrics bool
+	Metrics bool `yaml:"metrics"`
 
-	Serve    bool
-	HTTPAddr string
-	KeepTemp bool
+	Serve    bool   `yaml:"serve"`
+	HTTPAddr string `yaml:"http"`
+	KeepTemp bool   `yaml:"keep-temp"`
 }
 
 // VideoInfo describes the probed primary video stream.
