@@ -77,11 +77,14 @@ func TestBuildROIQPMapFilterUsesAddROI(t *testing.T) {
 		ROIMiddleQOffset: -0.10,
 	}
 
-	filter := buildROIQPMapFilter(
+	filter, err := buildROIQPMapFilter(
 		cfg,
 		VideoInfo{Width: 640, Height: 360},
 		ROI{X: 160, Y: 90, W: 160, H: 90},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, part := range []string{
 		"addroi=x=120:y=68:w=240:h=134:qoffset=-0.1000:clear=1",
@@ -91,5 +94,58 @@ func TestBuildROIQPMapFilterUsesAddROI(t *testing.T) {
 		if !strings.Contains(filter, part) {
 			t.Fatalf("QP-map filter does not contain %q:\n%s", part, filter)
 		}
+	}
+}
+
+func TestBuildROIQPMapFilterUsesBlockMap(t *testing.T) {
+	cfg := Config{
+		ROIBlockSize: defaultROIBlockSize,
+		ROIBlocks: []QPMapBlock{
+			{Col: 1, Row: 2, QOffset: -0.40},
+			{Col: 2, Row: 2, W: 2, H: 1, QOffset: -0.20},
+		},
+	}
+
+	filter, err := buildROIQPMapFilter(
+		cfg,
+		VideoInfo{Width: 320, Height: 256},
+		ROI{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, part := range []string{
+		"addroi=x=64:y=128:w=64:h=64:qoffset=-0.4000:clear=1",
+		"addroi=x=128:y=128:w=64:h=64:qoffset=-0.2000",
+		"addroi=x=192:y=128:w=64:h=64:qoffset=-0.2000",
+		"format=yuv420p[v]",
+	} {
+		if !strings.Contains(filter, part) {
+			t.Fatalf("block QP-map filter does not contain %q:\n%s", part, filter)
+		}
+	}
+}
+
+func TestSelectROIUsesBlockMapBoundingBox(t *testing.T) {
+	cfg := Config{
+		Mode:         "blocks",
+		ROIBlockSize: defaultROIBlockSize,
+		ROIBlocks: []QPMapBlock{
+			{Col: 1, Row: 1, W: 2, H: 1, QOffset: -0.30},
+			{Col: 4, Row: 3, QOffset: -0.15},
+		},
+	}
+
+	got, err := selectROI(cfg, VideoInfo{Width: 384, Height: 320}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.X != 64 || got.Y != 64 || got.W != 256 || got.H != 192 {
+		t.Fatalf("block ROI = %+v, want x=64 y=64 w=256 h=192", got)
+	}
+	if got.Source != "qp-blocks-64px" {
+		t.Fatalf("Source = %q, want qp-blocks-64px", got.Source)
 	}
 }

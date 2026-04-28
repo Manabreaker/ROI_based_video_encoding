@@ -189,6 +189,11 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 
 func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, output string, workDir string, rateControl string) (EncodeDecision, error) {
 	path := filepath.Join(workDir, fmt.Sprintf("roi_qp_map_%s.mp4", rateControl))
+	blockCount := countROIBlockCells(cfg.ROIBlocks)
+	blockSize := 0
+	if blockCount > 0 {
+		blockSize = normalizedROIBlockSize(cfg)
+	}
 
 	if err := renderROIQPMapCandidate(cfg, info, roi, path, cfg.ROIHighQualityCRF, targetKbps); err != nil {
 		return EncodeDecision{}, err
@@ -207,6 +212,8 @@ func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps floa
 		RateControl:   rateControl,
 		ROIQOffset:    cfg.ROIQOffset,
 		MiddleQOffset: cfg.ROIMiddleQOffset,
+		ROIBlockSize:  blockSize,
+		ROIBlockCount: blockCount,
 		Kbps:          actual,
 		Path:          path,
 		Note:          "encoder-level ROI side data via FFmpeg addroi",
@@ -217,7 +224,26 @@ func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps floa
 		}
 	}
 
-	if c.ROIYPSNR > 0 {
+	if blockCount > 0 && c.ROIYPSNR > 0 {
+		fmt.Printf("      ROI QP-map candidate %s/%s, CRF %2d, %d blocks at %dpx grid -> %.1f kbps, ROI PSNR-Y %.2f dB\n",
+			c.Encoder,
+			c.RateControl,
+			c.CRF,
+			c.ROIBlockCount,
+			c.ROIBlockSize,
+			c.Kbps,
+			c.ROIYPSNR,
+		)
+	} else if blockCount > 0 {
+		fmt.Printf("      ROI QP-map candidate %s/%s, CRF %2d, %d blocks at %dpx grid -> %.1f kbps\n",
+			c.Encoder,
+			c.RateControl,
+			c.CRF,
+			c.ROIBlockCount,
+			c.ROIBlockSize,
+			c.Kbps,
+		)
+	} else if c.ROIYPSNR > 0 {
 		fmt.Printf("      ROI QP-map candidate %s/%s, CRF %2d, middle qoffset %.3f, ROI qoffset %.3f -> %.1f kbps, ROI PSNR-Y %.2f dB\n",
 			c.Encoder,
 			c.RateControl,
@@ -243,6 +269,9 @@ func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps floa
 	}
 
 	note := "encoder-level ROI QP map via FFmpeg addroi side data; pixels are not preprocessed before encoding"
+	if blockCount > 0 {
+		note += fmt.Sprintf("; block map uses %d configured cells at %d px grid and overrides roi-qoffset/middle-qoffset rectangles", blockCount, blockSize)
+	}
 	if isNVENC(cfg) {
 		note += "; spatial AQ is enabled for NVENC ROI handling"
 	} else {
@@ -263,6 +292,8 @@ func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps floa
 		RateControl:     rateControl,
 		ROIQOffset:      cfg.ROIQOffset,
 		MiddleQOffset:   cfg.ROIMiddleQOffset,
+		ROIBlockSize:    blockSize,
+		ROIBlockCount:   blockCount,
 		ROIYPSNR:        c.ROIYPSNR,
 		Note:            note,
 		Candidates:      []CandidateSummary{candidateSummary(c)},
@@ -467,7 +498,10 @@ func renderROIQPMapCandidate(cfg Config, info VideoInfo, roi ROI, output string,
 }
 
 func renderROIQPMapCandidateCRF(cfg Config, info VideoInfo, roi ROI, output string, crf int) error {
-	filter := buildROIQPMapFilter(cfg, info, roi)
+	filter, err := buildROIQPMapFilter(cfg, info, roi)
+	if err != nil {
+		return err
+	}
 
 	args := []string{
 		"-hide_banner",
@@ -489,7 +523,10 @@ func renderROIQPMapCandidateABR(cfg Config, info VideoInfo, roi ROI, output stri
 		return errors.New("targetKbps must be greater than zero for ROI QP-map ABR encoding")
 	}
 
-	filter := buildROIQPMapFilter(cfg, info, roi)
+	filter, err := buildROIQPMapFilter(cfg, info, roi)
+	if err != nil {
+		return err
+	}
 	bitrate, maxrate, bufsize := roiRateArgs(cfg, targetKbps)
 
 	baseArgs := []string{
@@ -613,7 +650,11 @@ func renderROICandidateABR(cfg Config, info VideoInfo, roi ROI, output string, s
 }
 
 // buildROIQPMapFilter attaches encoder-level ROI side data without changing pixels.
-func buildROIQPMapFilter(cfg Config, info VideoInfo, roi ROI) string {
+func buildROIQPMapFilter(cfg Config, info VideoInfo, roi ROI) (string, error) {
+	if usesROIBlockMap(cfg) {
+		return buildROIBlockQPMapFilter(cfg, info)
+	}
+
 	middle := middleROI(cfg, roi, info)
 
 	var parts []string
@@ -646,7 +687,37 @@ func buildROIQPMapFilter(cfg Config, info VideoInfo, roi ROI) string {
 	}
 	parts = append(parts, "format=yuv420p[v]")
 
-	return strings.Join(parts, ",")
+	return strings.Join(parts, ","), nil
+}
+
+func buildROIBlockQPMapFilter(cfg Config, info VideoInfo) (string, error) {
+	rects, err := qpMapBlockRects(cfg, info)
+	if err != nil {
+		return "", err
+	}
+	if len(rects) == 0 {
+		return "", errors.New("roi-blocks requires at least one block")
+	}
+
+	parts := make([]string, 0, len(rects)+1)
+	for i, r := range rects {
+		clear := ""
+		if i == 0 {
+			clear = ":clear=1"
+		}
+		parts = append(parts, fmt.Sprintf(
+			"addroi=x=%d:y=%d:w=%d:h=%d:qoffset=%.4f%s",
+			r.X,
+			r.Y,
+			r.W,
+			r.H,
+			r.QOffset,
+			clear,
+		))
+	}
+	parts = append(parts, "format=yuv420p[v]")
+
+	return strings.Join(parts, ","), nil
 }
 
 // buildROIFilter creates low, middle, and original-ROI layers before final encoding.

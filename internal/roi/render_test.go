@@ -81,6 +81,29 @@ func TestPanelBaseFiltersForQPMapROI(t *testing.T) {
 	}
 }
 
+func TestPanelBaseFiltersForBlockQPMapROI(t *testing.T) {
+	filters := panelBaseFilters("ROI output", EncodeDecision{
+		TargetKbps:      500,
+		ActualKbps:      495,
+		WithinTolerance: true,
+		ROIControl:      "qp-map",
+		RateControl:     "abr",
+		ROIBlockSize:    64,
+		ROIBlockCount:   7,
+	}, true)
+	joined := strings.Join(filters, ",")
+
+	for _, part := range []string{
+		"ROI output",
+		"within tolerance | ABR QP-map",
+		"QP blocks 7 | 64 px",
+	} {
+		if !strings.Contains(joined, part) {
+			t.Fatalf("block QP-map ROI panel does not contain %q:\n%s", part, joined)
+		}
+	}
+}
+
 func TestBuildComparisonFilterScalesWideNVENCHStack(t *testing.T) {
 	filter, scaled, err := buildComparisonFilter(
 		Config{VideoEncoder: "h264_nvenc", NVENCPreset: "p4"},

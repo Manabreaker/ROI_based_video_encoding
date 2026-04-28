@@ -95,42 +95,10 @@ func buildComparisonFilter(
 		prefix = leftChain + ";" + rightChain + ";"
 	}
 
-	middle := middleROI(cfg, roi, info)
-
-	leftROIBox := fmt.Sprintf(
-		"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=4",
-		roi.X,
-		roi.Y,
-		roi.W,
-		roi.H,
-	)
-
-	rightMiddleBox := fmt.Sprintf(
-		"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=5",
-		info.Width+middle.X,
-		middle.Y,
-		middle.W,
-		middle.H,
-	)
-
-	rightROIBox := fmt.Sprintf(
-		"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=4",
-		info.Width+roi.X,
-		roi.Y,
-		roi.W,
-		roi.H,
-	)
-
-	boxes := []string{leftROIBox}
-	if roiDecision.ROIControl != "qp-map" {
-		boxes = append(boxes, fmt.Sprintf(
-			"drawbox=x=%d:y=0:w=%d:h=%d:color=red@0.90:t=5",
-			info.Width,
-			info.Width,
-			info.Height,
-		))
+	boxes, err := comparisonDrawBoxes(cfg, info, roi, roiDecision)
+	if err != nil {
+		return "", false, err
 	}
-	boxes = append(boxes, rightMiddleBox, rightROIBox)
 
 	scaled := shouldScaleComparisonForNVENC(cfg, info)
 	chain := []string{"[left][right]hstack=inputs=2"}
@@ -145,6 +113,91 @@ func buildComparisonFilter(
 
 func shouldScaleComparisonForNVENC(cfg Config, info VideoInfo) bool {
 	return isNVENC(cfg) && info.Width > 0 && info.Width*2 > nvencH264MaxWidth
+}
+
+func comparisonDrawBoxes(cfg Config, info VideoInfo, roi ROI, roiDecision EncodeDecision) ([]string, error) {
+	if usesROIBlockMap(cfg) {
+		left, err := roiBlockDrawBoxes(cfg, info, 0)
+		if err != nil {
+			return nil, err
+		}
+		right, err := roiBlockDrawBoxes(cfg, info, info.Width)
+		if err != nil {
+			return nil, err
+		}
+		return append(left, right...), nil
+	}
+
+	middle := middleROI(cfg, roi, info)
+	boxes := []string{
+		fmt.Sprintf(
+			"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=4",
+			roi.X,
+			roi.Y,
+			roi.W,
+			roi.H,
+		),
+	}
+	if roiDecision.ROIControl != "qp-map" {
+		boxes = append(boxes, fmt.Sprintf(
+			"drawbox=x=%d:y=0:w=%d:h=%d:color=red@0.90:t=5",
+			info.Width,
+			info.Width,
+			info.Height,
+		))
+	}
+	boxes = append(
+		boxes,
+		fmt.Sprintf(
+			"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=5",
+			info.Width+middle.X,
+			middle.Y,
+			middle.W,
+			middle.H,
+		),
+		fmt.Sprintf(
+			"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=4",
+			info.Width+roi.X,
+			roi.Y,
+			roi.W,
+			roi.H,
+		),
+	)
+
+	return boxes, nil
+}
+
+func roiBlockDrawBoxes(cfg Config, info VideoInfo, xOffset int) ([]string, error) {
+	rects, err := qpMapBlockRects(cfg, info)
+	if err != nil {
+		return nil, err
+	}
+
+	boxes := make([]string, 0, len(rects))
+	for _, r := range rects {
+		boxes = append(boxes, fmt.Sprintf(
+			"drawbox=x=%d:y=%d:w=%d:h=%d:color=%s:t=3",
+			xOffset+r.X,
+			r.Y,
+			r.W,
+			r.H,
+			roiBlockBoxColor(r.QOffset),
+		))
+	}
+	return boxes, nil
+}
+
+func roiBlockBoxColor(qoffset float64) string {
+	switch {
+	case qoffset < -0.20:
+		return "lime@0.95"
+	case qoffset < 0:
+		return "orange@0.95"
+	case qoffset > 0:
+		return "red@0.95"
+	default:
+		return "white@0.70"
+	}
 }
 
 // drawPanelTextChain builds drawtext filters with per-window current bitrate labels.
@@ -209,7 +262,11 @@ func panelBaseFilters(title string, decision EncodeDecision, isROI bool) []strin
 	if isROI {
 		if decision.ROIControl == "qp-map" {
 			line3 = fmt.Sprintf("%s | %s QP-map", status, strings.ToUpper(strings.TrimSpace(decision.RateControl)))
-			line4 = fmt.Sprintf("ROI qoffset %.2f | MID %.2f", decision.ROIQOffset, decision.MiddleQOffset)
+			if decision.ROIBlockCount > 0 {
+				line4 = fmt.Sprintf("QP blocks %d | %d px", decision.ROIBlockCount, decision.ROIBlockSize)
+			} else {
+				line4 = fmt.Sprintf("ROI qoffset %.2f | MID %.2f", decision.ROIQOffset, decision.MiddleQOffset)
+			}
 			return []string{
 				drawTextFilter(title, 24, 24, 28, "white", "black@0.65", ""),
 				drawTextFilter(line2, 24, 64, 22, "white", "black@0.65", ""),
@@ -282,15 +339,23 @@ func renderPreview(cfg Config, info VideoInfo, roi ROI, output string) error {
 
 	middle := middleROI(cfg, roi, info)
 	var boxes []string
-	if roiControl(cfg) != "qp-map" {
+	if usesROIBlockMap(cfg) {
+		blockBoxes, err := roiBlockDrawBoxes(cfg, info, 0)
+		if err != nil {
+			return err
+		}
+		boxes = append(boxes, blockBoxes...)
+	} else if roiControl(cfg) != "qp-map" {
 		boxes = append(boxes, fmt.Sprintf("drawbox=x=0:y=0:w=%d:h=%d:color=red@0.90:t=6", info.Width, info.Height))
 	}
-	boxes = append(
-		boxes,
-		fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=6", middle.X, middle.Y, middle.W, middle.H),
-		fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.95:t=6", roi.X, roi.Y, roi.W, roi.H),
-		"format=rgb24",
-	)
+	if !usesROIBlockMap(cfg) {
+		boxes = append(
+			boxes,
+			fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=6", middle.X, middle.Y, middle.W, middle.H),
+			fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.95:t=6", roi.X, roi.Y, roi.W, roi.H),
+		)
+	}
+	boxes = append(boxes, "format=rgb24")
 
 	filter := strings.Join(boxes, ",")
 

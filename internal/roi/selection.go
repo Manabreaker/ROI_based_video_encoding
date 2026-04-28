@@ -495,6 +495,8 @@ func candidateSummary(c Candidate) CandidateSummary {
 		Blur:          c.Blur,
 		MiddleScale:   c.MiddleScale,
 		MiddleBlur:    c.MiddleBlur,
+		ROIBlockSize:  c.ROIBlockSize,
+		ROIBlockCount: c.ROIBlockCount,
 		Kbps:          c.Kbps,
 		ROIYPSNR:      c.ROIYPSNR,
 		Note:          c.Note,

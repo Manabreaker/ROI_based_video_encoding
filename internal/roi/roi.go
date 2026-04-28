@@ -15,7 +15,11 @@ import (
 
 // selectROI chooses either a static ROI or a simple motion-derived ROI.
 func selectROI(cfg Config, info VideoInfo, tmpDir string) (ROI, error) {
-	switch strings.ToLower(strings.TrimSpace(cfg.Mode)) {
+	if usesROIBlockMap(cfg) {
+		return blockMapROI(cfg, info)
+	}
+
+	switch roiMode(cfg) {
 	case "static":
 		if strings.TrimSpace(cfg.ROIString) == "" {
 			r := defaultCenterROI(info)
@@ -40,7 +44,21 @@ func selectROI(cfg Config, info VideoInfo, tmpDir string) (ROI, error) {
 		return clampROI(r, info), nil
 
 	default:
-		return ROI{}, fmt.Errorf("unknown --mode %q; use static or motion", cfg.Mode)
+		return ROI{}, fmt.Errorf("unknown --mode %q; use static, motion, or blocks", cfg.Mode)
+	}
+}
+
+func roiMode(cfg Config) string {
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	switch mode {
+	case "", "static":
+		return "static"
+	case "motion":
+		return "motion"
+	case "block", "blocks", "qp-blocks", "qp_blocks", "qp-map-blocks", "qp_map_blocks":
+		return "blocks"
+	default:
+		return mode
 	}
 }
 

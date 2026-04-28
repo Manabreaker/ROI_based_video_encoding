@@ -7,8 +7,10 @@ type Config struct {
 	OutDir string `yaml:"out"`
 
 	// ROI selection.
-	Mode      string `yaml:"mode"`
-	ROIString string `yaml:"roi"`
+	Mode         string       `yaml:"mode"`
+	ROIString    string       `yaml:"roi"`
+	ROIBlockSize int          `yaml:"roi-block-size"`
+	ROIBlocks    []QPMapBlock `yaml:"roi-blocks"`
 
 	// Bitrate target for the generated ROI output.
 	TargetBitrate string  `yaml:"target-bitrate"`
@@ -102,6 +104,8 @@ type Candidate struct {
 	Blur          int     `json:"periphery_blur,omitempty"`
 	MiddleScale   float64 `json:"middle_scale,omitempty"`
 	MiddleBlur    int     `json:"middle_blur,omitempty"`
+	ROIBlockSize  int     `json:"roi_block_size,omitempty"`
+	ROIBlockCount int     `json:"roi_block_count,omitempty"`
 	Kbps          float64 `json:"bitrate_kbps"`
 	ROIYPSNR      float64 `json:"roi_psnr_y_db,omitempty"`
 	Note          string  `json:"note,omitempty"`
@@ -121,6 +125,8 @@ type CandidateSummary struct {
 	Blur          int     `json:"periphery_blur,omitempty"`
 	MiddleScale   float64 `json:"middle_scale,omitempty"`
 	MiddleBlur    int     `json:"middle_blur,omitempty"`
+	ROIBlockSize  int     `json:"roi_block_size,omitempty"`
+	ROIBlockCount int     `json:"roi_block_count,omitempty"`
 	Kbps          float64 `json:"bitrate_kbps"`
 	ROIYPSNR      float64 `json:"roi_psnr_y_db,omitempty"`
 	Note          string  `json:"note,omitempty"`
@@ -143,6 +149,8 @@ type EncodeDecision struct {
 	MiddleScale     float64            `json:"middle_scale,omitempty"`
 	MiddleBlur      int                `json:"middle_blur,omitempty"`
 	MiddleMargin    float64            `json:"middle_margin,omitempty"`
+	ROIBlockSize    int                `json:"roi_block_size,omitempty"`
+	ROIBlockCount   int                `json:"roi_block_count,omitempty"`
 	ROIYPSNR        float64            `json:"roi_psnr_y_db,omitempty"`
 	SizeBytes       int64              `json:"size_bytes,omitempty"`
 	Note            string             `json:"note,omitempty"`
@@ -201,6 +209,8 @@ type Report struct {
 	TargetKbps    float64          `json:"target_kbps"`
 	Video         VideoInfo        `json:"video"`
 	ROI           ROI              `json:"roi"`
+	ROIBlockSize  int              `json:"roi_block_size,omitempty"`
+	ROIBlocks     []QPMapBlock     `json:"roi_blocks,omitempty"`
 	Decisions     []EncodeDecision `json:"decisions"`
 	Artifacts     []Artifact       `json:"artifacts"`
 	Notes         []string         `json:"notes"`
@@ -233,4 +243,13 @@ type ffprobePacketsJSON struct {
 type peripherySetting struct {
 	Scale float64
 	Blur  int
+}
+
+// QPMapBlock identifies one or more 64x64-style QP-map blocks by grid position.
+type QPMapBlock struct {
+	Col     int     `yaml:"col" json:"col"`
+	Row     int     `yaml:"row" json:"row"`
+	W       int     `yaml:"w,omitempty" json:"w,omitempty"`
+	H       int     `yaml:"h,omitempty" json:"h,omitempty"`
+	QOffset float64 `yaml:"qoffset" json:"qoffset"`
 }

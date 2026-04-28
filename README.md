@@ -93,6 +93,25 @@ fit-iterations: 5
 ./roi-poc --config roi.yaml --target-bitrate 800k --metrics=true
 ```
 
+Для более точной QP-map разметки можно задавать ROI блоками сетки:
+
+```yaml
+mode: blocks
+roi-control: qp-map
+roi-block-size: 64
+roi-blocks:
+  - col: 4
+    row: 2
+    w: 2
+    h: 2
+    qoffset: -0.40
+  - col: 3
+    row: 1
+    qoffset: -0.15
+```
+
+`col` и `row` - индексы блоков, не пиксели. `w` и `h` задаются тоже в блоках; если их не указать, используется один блок 64x64. Пример лежит в [config/qp_block_map_example.yaml](config/qp_block_map_example.yaml).
+
 ## Что появится в output-директории
 
 После успешного запуска в `--out` создаются:
@@ -182,6 +201,16 @@ http://localhost:8080/comparison_baseline_vs_roi.mp4
 
 `qp-map` использует FFmpeg `addroi` и передает энкодеру ROI side data. Отрицательный `qoffset` просит энкодер снизить QP внутри области, то есть сохранить там больше качества. Для `libx264` программа включает `-aq-mode 1`, потому что x264 использует ROI side data только с adaptive quantization; для `h264_nvenc` включается `-spatial-aq 1`.
 
+Кроме прямоугольной ROI можно использовать блочную QP-map:
+
+```bash
+--mode blocks
+--roi-block-size 64
+--roi-blocks "4,2,2,2,-0.40;3,1,-0.15"
+```
+
+Кадр делится на сетку 64x64, блоки нумеруются с нуля слева направо и сверху вниз. Формат флага: `col,row,qoffset` для одного блока или `col,row,w,h,qoffset` для прямоугольника из блоков. Блоки не должны пересекаться; `qoffset` остается в диапазоне `[-1,1]`.
+
 Старый preprocessing-режим:
 
 ```bash
@@ -231,8 +260,10 @@ Fixed-quality режим:
 | `--input`              | -            | входной видеофайл, URL, RTSP или другой FFmpeg-readable source |
 | `--config`             | -            | YAML config; явно переданные флаги имеют приоритет             |
 | `--out`                | `out`        | директория для результата                                      |
-| `--mode`               | `static`     | режим ROI: `static` или `motion`                               |
+| `--mode`               | `static`     | режим ROI: `static`, `motion` или `blocks`                     |
 | `--roi`                | -            | ROI как `x,y,w,h`, в пикселях или долях кадра                  |
+| `--roi-block-size`     | `64`         | размер блока для `--mode blocks`                               |
+| `--roi-blocks`         | -            | QP-map блоки: `col,row,qoffset` или `col,row,w,h,qoffset`      |
 | `--target-bitrate`     | `1000k`      | целевой bitrate для ROI output                                 |
 | `--roi-control`        | `qp-map`     | `qp-map` или старый `mask` preprocessing                       |
 | `--roi-qoffset`        | `-0.30`      | QP offset для основной ROI в `qp-map` режиме                   |

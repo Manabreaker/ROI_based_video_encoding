@@ -140,3 +140,95 @@ func TestParseArgsDoesNotTreatFlagValueYAMLPathAsConfig(t *testing.T) {
 		t.Fatalf("TargetBitrate = %q, want 450k", cfg.TargetBitrate)
 	}
 }
+
+func TestParseArgsLoadsBlockROIFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blocks.yaml")
+	content := []byte(`
+input: video.mp4
+mode: blocks
+roi-block-size: 64
+roi-blocks:
+  - col: 4
+    row: 3
+    qoffset: -0.35
+  - col: 5
+    row: 3
+    w: 2
+    h: 1
+    qoffset: -0.20
+`)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := ParseArgs([]string{"--config", path})
+	if err != nil {
+		t.Fatalf("ParseArgs returned error: %v", err)
+	}
+
+	if cfg.Mode != "blocks" {
+		t.Fatalf("Mode = %q, want blocks", cfg.Mode)
+	}
+	if cfg.ROIBlockSize != 64 {
+		t.Fatalf("ROIBlockSize = %d, want 64", cfg.ROIBlockSize)
+	}
+	if len(cfg.ROIBlocks) != 2 {
+		t.Fatalf("len(ROIBlocks) = %d, want 2", len(cfg.ROIBlocks))
+	}
+	if cfg.ROIBlocks[1].W != 2 || cfg.ROIBlocks[1].QOffset != -0.20 {
+		t.Fatalf("ROIBlocks[1] = %+v, want w=2 qoffset=-0.20", cfg.ROIBlocks[1])
+	}
+}
+
+func TestParseArgsParsesROIBlocksFlag(t *testing.T) {
+	cfg, err := ParseArgs([]string{
+		"--input", "video.mp4",
+		"--roi-blocks", "1,2,-0.35;3,4,2,1,-0.15",
+	})
+	if err != nil {
+		t.Fatalf("ParseArgs returned error: %v", err)
+	}
+
+	if cfg.Mode != "blocks" {
+		t.Fatalf("Mode = %q, want blocks", cfg.Mode)
+	}
+	if len(cfg.ROIBlocks) != 2 {
+		t.Fatalf("len(ROIBlocks) = %d, want 2", len(cfg.ROIBlocks))
+	}
+	if cfg.ROIBlocks[0].Col != 1 || cfg.ROIBlocks[0].Row != 2 || cfg.ROIBlocks[0].QOffset != -0.35 {
+		t.Fatalf("ROIBlocks[0] = %+v", cfg.ROIBlocks[0])
+	}
+	if cfg.ROIBlocks[1].Col != 3 || cfg.ROIBlocks[1].Row != 4 || cfg.ROIBlocks[1].W != 2 || cfg.ROIBlocks[1].H != 1 {
+		t.Fatalf("ROIBlocks[1] = %+v", cfg.ROIBlocks[1])
+	}
+}
+
+func TestParseArgsROIFlagOverridesYAMLBlockROI(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blocks.yaml")
+	content := []byte(`
+input: video.mp4
+mode: blocks
+roi-blocks:
+  - col: 4
+    row: 3
+    qoffset: -0.35
+`)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := ParseArgs([]string{"--config", path, "--roi", "0.1,0.2,0.3,0.4"})
+	if err != nil {
+		t.Fatalf("ParseArgs returned error: %v", err)
+	}
+
+	if cfg.Mode != "static" {
+		t.Fatalf("Mode = %q, want static", cfg.Mode)
+	}
+	if cfg.ROIString != "0.1,0.2,0.3,0.4" {
+		t.Fatalf("ROIString = %q, want flag ROI", cfg.ROIString)
+	}
+	if len(cfg.ROIBlocks) != 0 {
+		t.Fatalf("ROIBlocks = %+v, want cleared by --roi", cfg.ROIBlocks)
+	}
+}

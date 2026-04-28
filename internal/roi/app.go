@@ -10,6 +10,10 @@ import (
 
 // Run orchestrating probing, ROI rendering, bitrate measurement, comparison rendering, and reports.
 func Run(cfg Config) error {
+	if usesROIBlockMap(cfg) {
+		cfg.Mode = "blocks"
+		cfg.ROIString = ""
+	}
 	if err := validateConfig(cfg); err != nil {
 		return err
 	}
@@ -68,6 +72,9 @@ func Run(cfg Config) error {
 	}
 
 	fmt.Printf("      ROI %s: x=%d y=%d w=%d h=%d\n", roi.Source, roi.X, roi.Y, roi.W, roi.H)
+	if usesROIBlockMap(cfg) {
+		fmt.Printf("      QP block map: %d blocks, %d px grid\n", countROIBlockCells(cfg.ROIBlocks), normalizedROIBlockSize(cfg))
+	}
 
 	baseline := cfg.Input
 	roiVideo := filepath.Join(cfg.OutDir, "roi_high_quality_region.mp4")
@@ -99,13 +106,23 @@ func Run(cfg Config) error {
 	}
 
 	if roiDecision.ROIControl == "qp-map" {
-		fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, middle qoffset %.3f, ROI qoffset %.3f\n",
-			roiDecision.TargetKbps,
-			roiDecision.ActualKbps,
-			roiDecision.CRF,
-			roiDecision.MiddleQOffset,
-			roiDecision.ROIQOffset,
-		)
+		if roiDecision.ROIBlockCount > 0 {
+			fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, %d QP blocks at %d px grid\n",
+				roiDecision.TargetKbps,
+				roiDecision.ActualKbps,
+				roiDecision.CRF,
+				roiDecision.ROIBlockCount,
+				roiDecision.ROIBlockSize,
+			)
+		} else {
+			fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, middle qoffset %.3f, ROI qoffset %.3f\n",
+				roiDecision.TargetKbps,
+				roiDecision.ActualKbps,
+				roiDecision.CRF,
+				roiDecision.MiddleQOffset,
+				roiDecision.ROIQOffset,
+			)
+		}
 	} else {
 		fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, middle scale %.2f blur %d, low scale %.2f blur %d\n",
 			roiDecision.TargetKbps,
@@ -220,10 +237,18 @@ func Run(cfg Config) error {
 		"Zone boxes plus text overlays are drawn only on the final comparison video and do not affect measured input/ROI bitrates.",
 	}
 	if roiDecision.ROIControl == "qp-map" {
-		notes = append(notes,
-			"ROI output uses FFmpeg addroi side data to request encoder-level QP offsets for the selected ROI and middle ring.",
-			"QP-map support is encoder-dependent; libx264 requires adaptive quantization and NVENC uses spatial AQ.",
-		)
+		if roiDecision.ROIBlockCount > 0 {
+			notes = append(notes,
+				"ROI output uses FFmpeg addroi side data to request per-block encoder-level QP offsets.",
+				"Block QP-map mode derives the report ROI from the bounding box of configured block cells, while each block keeps its own qoffset.",
+				"QP-map support is encoder-dependent; libx264 requires adaptive quantization and NVENC uses spatial AQ.",
+			)
+		} else {
+			notes = append(notes,
+				"ROI output uses FFmpeg addroi side data to request encoder-level QP offsets for the selected ROI and middle ring.",
+				"QP-map support is encoder-dependent; libx264 requires adaptive quantization and NVENC uses spatial AQ.",
+			)
+		}
 	} else {
 		notes = append(notes,
 			"ROI output keeps the selected ROI from the original frame, adds a medium-quality ring around it, and uses stronger degradation outside that ring.",
@@ -241,6 +266,10 @@ func Run(cfg Config) error {
 		ROI:           roi,
 		Decisions:     []EncodeDecision{baselineDecision, roiDecision},
 		Notes:         notes,
+	}
+	if usesROIBlockMap(cfg) {
+		report.ROIBlockSize = normalizedROIBlockSize(cfg)
+		report.ROIBlocks = cfg.ROIBlocks
 	}
 
 	artifacts := []string{baseline, roiVideo, comparison, preview, bitrateReportPath}

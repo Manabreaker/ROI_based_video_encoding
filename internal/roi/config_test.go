@@ -10,6 +10,7 @@ func validTestConfig() Config {
 		ROIControl:           "qp-map",
 		ROIQOffset:           -0.30,
 		ROIMiddleQOffset:     -0.10,
+		ROIBlockSize:         defaultROIBlockSize,
 		ROIHighQualityCRF:    16,
 		ROIMinCRF:            10,
 		ROIMaxCRFIfNeeded:    36,
@@ -85,5 +86,34 @@ func TestValidateConfigRejectsBadROIQOffset(t *testing.T) {
 
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("expected bad ROI qoffset error")
+	}
+}
+
+func TestValidateConfigAcceptsBlockROI(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Mode = "blocks"
+	cfg.ROIBlocks = []QPMapBlock{{Col: 1, Row: 2, QOffset: -0.35}}
+
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("validateConfig returned error: %v", err)
+	}
+}
+
+func TestValidateConfigRejectsBlockROIWithoutBlocks(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Mode = "blocks"
+
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("expected missing ROI blocks error")
+	}
+}
+
+func TestValidateConfigRejectsBadBlockQOffset(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Mode = "blocks"
+	cfg.ROIBlocks = []QPMapBlock{{Col: 1, Row: 2, QOffset: -1.35}}
+
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("expected bad block qoffset error")
 	}
 }
