@@ -40,7 +40,7 @@ func ParseFlags() Config {
 	flag.StringVar(&cfg.VideoEncoder, "encoder", "auto", "video encoder: auto, libx264, or h264_nvenc")
 	flag.StringVar(&cfg.Preset, "preset", "veryfast", "x264 preset")
 	flag.StringVar(&cfg.NVENCPreset, "nvenc-preset", "p4", "NVENC preset used when --encoder resolves to h264_nvenc")
-	flag.IntVar(&cfg.FitIterations, "fit-iterations", 9, "maximum CRF search iterations for emergency ROI fitting")
+	flag.IntVar(&cfg.FitIterations, "fit-iterations", 9, "maximum interpolation probes for ROI fitting and CRF search iterations for emergency ROI fitting")
 
 	flag.Float64Var(&cfg.MotionWindow, "motion-window", 0.6, "time gap in seconds between frames used for simple motion ROI detection")
 	flag.IntVar(&cfg.MotionThresh, "motion-threshold", 34, "grayscale difference threshold for motion ROI detection")

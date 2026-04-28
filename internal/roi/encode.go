@@ -71,71 +71,9 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 
 	settings := peripheryCandidates(cfg)
 
-	var candidates []Candidate
-
-	for idx, s := range settings {
-		path := filepath.Join(workDir, fmt.Sprintf("roi_%s_crf_%02d_candidate_%02d_scale_%.2f_blur_%02d.mp4",
-			rateControl,
-			cfg.ROIHighQualityCRF,
-			idx,
-			s.Scale,
-			s.Blur,
-		))
-
-		if err := renderROICandidate(cfg, info, roi, path, cfg.ROIHighQualityCRF, s.Scale, s.Blur, targetKbps); err != nil {
-			return EncodeDecision{}, err
-		}
-
-		kbps, err := measuredAverageBitrateKbps(path)
-		if err != nil {
-			return EncodeDecision{}, err
-		}
-
-		c := Candidate{
-			Kind:        roiCandidateKind(rateControl),
-			Encoder:     cfg.VideoEncoder,
-			CRF:         cfg.ROIHighQualityCRF,
-			RateControl: rateControl,
-			Scale:       s.Scale,
-			Blur:        s.Blur,
-			Kbps:        kbps,
-			Path:        path,
-		}
-		c.MiddleScale, c.MiddleBlur = middleQualitySettings(cfg, c.Scale, c.Blur)
-
-		if cfg.ROIFitMetric {
-			logPath := filepath.Join(workDir, fmt.Sprintf("roi_candidate_%02d_psnr.log", idx))
-			if err := attachROIPSNRMetric(cfg, roi, &c, logPath); err != nil {
-				fmt.Printf("      warning: ROI candidate metric failed: %v\n", err)
-			}
-		}
-
-		candidates = append(candidates, c)
-
-		if c.ROIYPSNR > 0 {
-			fmt.Printf("      ROI candidate %s/%s, CRF %2d, middle %.2f/%d, low %.2f/%d -> %.1f kbps, ROI PSNR-Y %.2f dB\n",
-				c.Encoder,
-				c.RateControl,
-				c.CRF,
-				c.MiddleScale,
-				c.MiddleBlur,
-				c.Scale,
-				c.Blur,
-				c.Kbps,
-				c.ROIYPSNR,
-			)
-		} else {
-			fmt.Printf("      ROI candidate %s/%s, CRF %2d, middle %.2f/%d, low %.2f/%d -> %.1f kbps\n",
-				c.Encoder,
-				c.RateControl,
-				c.CRF,
-				c.MiddleScale,
-				c.MiddleBlur,
-				c.Scale,
-				c.Blur,
-				c.Kbps,
-			)
-		}
+	candidates, err := fitPeripheryCandidatesInterpolated(cfg, info, roi, targetKbps, workDir, settings, rateControl)
+	if err != nil {
+		return EncodeDecision{}, err
 	}
 
 	var best Candidate
@@ -244,6 +182,115 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 		Note:            note,
 		Candidates:      candidateSummaries(candidates),
 	}, nil
+}
+
+// fitPeripheryCandidatesInterpolated probes the ordered periphery ladder using bitrate interpolation.
+func fitPeripheryCandidatesInterpolated(
+	cfg Config,
+	info VideoInfo,
+	roi ROI,
+	targetKbps float64,
+	workDir string,
+	settings []peripherySetting,
+	rateControl string,
+) ([]Candidate, error) {
+	eval := func(idx int, s peripherySetting) (Candidate, error) {
+		return evaluatePeripheryCandidate(cfg, info, roi, targetKbps, workDir, settings, rateControl, idx, s)
+	}
+
+	return searchPeripheryCandidatesInterpolated(
+		settings,
+		targetKbps,
+		cfg.Tolerance,
+		cfg.FitIterations,
+		cfg.ManualPeripheryScale,
+		cfg.ManualBlurRadius,
+		eval,
+	)
+}
+
+func evaluatePeripheryCandidate(
+	cfg Config,
+	info VideoInfo,
+	roi ROI,
+	targetKbps float64,
+	workDir string,
+	settings []peripherySetting,
+	rateControl string,
+	idx int,
+	s peripherySetting,
+) (Candidate, error) {
+	path := filepath.Join(workDir, fmt.Sprintf("roi_%s_crf_%02d_candidate_%02d_scale_%.2f_blur_%02d.mp4",
+		rateControl,
+		cfg.ROIHighQualityCRF,
+		idx,
+		s.Scale,
+		s.Blur,
+	))
+
+	if err := renderROICandidate(cfg, info, roi, path, cfg.ROIHighQualityCRF, s.Scale, s.Blur, targetKbps); err != nil {
+		return Candidate{}, err
+	}
+
+	kbps, err := measuredAverageBitrateKbps(path)
+	if err != nil {
+		return Candidate{}, err
+	}
+
+	c := Candidate{
+		Kind:        roiCandidateKind(rateControl),
+		Encoder:     cfg.VideoEncoder,
+		CRF:         cfg.ROIHighQualityCRF,
+		RateControl: rateControl,
+		Scale:       s.Scale,
+		Blur:        s.Blur,
+		Kbps:        kbps,
+		Path:        path,
+	}
+	c.MiddleScale, c.MiddleBlur = middleQualitySettings(cfg, c.Scale, c.Blur)
+
+	if cfg.ROIFitMetric {
+		logPath := filepath.Join(workDir, fmt.Sprintf("roi_candidate_%02d_psnr.log", idx))
+		if err := attachROIPSNRMetric(cfg, roi, &c, logPath); err != nil {
+			fmt.Printf("      warning: ROI candidate metric failed: %v\n", err)
+		}
+	}
+
+	logROICandidate(c, idx, len(settings))
+
+	return c, nil
+}
+
+func logROICandidate(c Candidate, idx int, total int) {
+	if c.ROIYPSNR > 0 {
+		fmt.Printf("      ROI interpolation candidate %02d/%02d %s/%s, CRF %2d, middle %.2f/%d, low %.2f/%d -> %.1f kbps, ROI PSNR-Y %.2f dB\n",
+			idx+1,
+			total,
+			c.Encoder,
+			c.RateControl,
+			c.CRF,
+			c.MiddleScale,
+			c.MiddleBlur,
+			c.Scale,
+			c.Blur,
+			c.Kbps,
+			c.ROIYPSNR,
+		)
+		return
+	}
+
+	fmt.Printf("      ROI interpolation candidate %02d/%02d %s/%s, CRF %2d, middle %.2f/%d, low %.2f/%d -> %.1f kbps\n",
+		idx+1,
+		total,
+		c.Encoder,
+		c.RateControl,
+		c.CRF,
+		c.MiddleScale,
+		c.MiddleBlur,
+		c.Scale,
+		c.Blur,
+		c.Kbps,
+	)
 }
 
 // fitROIEmergencyCRF raises ROI CRF only when preserving high-quality ROI cannot reach the target.
