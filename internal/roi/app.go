@@ -57,7 +57,7 @@ func Run(cfg Config) error {
 		return err
 	}
 	if !cfg.KeepTemp {
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 	}
 
 	fmt.Println("[2/7] Selecting ROI...")
@@ -87,22 +87,36 @@ func Run(cfg Config) error {
 	}
 	fmt.Println()
 
-	fmt.Println("[4/7] Rendering ROI fitted by changing periphery quality...")
+	if roiControl(cfg) == "qp-map" {
+		fmt.Println("[4/7] Rendering ROI using encoder QP-map side data...")
+	} else {
+		fmt.Println("[4/7] Rendering ROI fitted by changing periphery quality...")
+	}
 
 	roiDecision, err := fitROIToTarget(cfg, info, roi, targetKbps, roiVideo, filepath.Join(tmpDir, "roi_fit"))
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, middle scale %.2f blur %d, low scale %.2f blur %d\n",
-		roiDecision.TargetKbps,
-		roiDecision.ActualKbps,
-		roiDecision.CRF,
-		roiDecision.MiddleScale,
-		roiDecision.MiddleBlur,
-		roiDecision.Scale,
-		roiDecision.Blur,
-	)
+	if roiDecision.ROIControl == "qp-map" {
+		fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, middle qoffset %.3f, ROI qoffset %.3f\n",
+			roiDecision.TargetKbps,
+			roiDecision.ActualKbps,
+			roiDecision.CRF,
+			roiDecision.MiddleQOffset,
+			roiDecision.ROIQOffset,
+		)
+	} else {
+		fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, middle scale %.2f blur %d, low scale %.2f blur %d\n",
+			roiDecision.TargetKbps,
+			roiDecision.ActualKbps,
+			roiDecision.CRF,
+			roiDecision.MiddleScale,
+			roiDecision.MiddleBlur,
+			roiDecision.Scale,
+			roiDecision.Blur,
+		)
+	}
 	if roiDecision.Note != "" {
 		fmt.Printf("      note: %s\n", roiDecision.Note)
 	}
@@ -200,6 +214,23 @@ func Run(cfg Config) error {
 		}
 	}
 
+	notes := []string{
+		"Baseline is the original input video and is not re-encoded by the PoC.",
+		"The intended comparison is subjective quality near the ROI against a lower measured bitrate and smaller generated ROI file.",
+		"Zone boxes plus text overlays are drawn only on the final comparison video and do not affect measured input/ROI bitrates.",
+	}
+	if roiDecision.ROIControl == "qp-map" {
+		notes = append(notes,
+			"ROI output uses FFmpeg addroi side data to request encoder-level QP offsets for the selected ROI and middle ring.",
+			"QP-map support is encoder-dependent; libx264 requires adaptive quantization and NVENC uses spatial AQ.",
+		)
+	} else {
+		notes = append(notes,
+			"ROI output keeps the selected ROI from the original frame, adds a medium-quality ring around it, and uses stronger degradation outside that ring.",
+			"The ROI is visually preserved by preprocessing, not by encoder-level ROI QP maps, so it is not mathematically lossless after final encoding.",
+		)
+	}
+
 	report := Report{
 		CreatedAt:     time.Now().Format(time.RFC3339),
 		Input:         cfg.Input,
@@ -209,13 +240,7 @@ func Run(cfg Config) error {
 		Video:         info,
 		ROI:           roi,
 		Decisions:     []EncodeDecision{baselineDecision, roiDecision},
-		Notes: []string{
-			"Baseline is the original input video and is not re-encoded by the PoC.",
-			"ROI output keeps the selected ROI from the original frame, adds a medium-quality ring around it, and uses stronger degradation outside that ring.",
-			"The intended comparison is subjective quality near the ROI against a lower measured bitrate and smaller generated ROI file.",
-			"The ROI is visually preserved by preprocessing, not by encoder-level ROI QP maps, so it is not mathematically lossless after final encoding.",
-			"Green, orange, and red zone boxes plus text overlays are drawn only on the final comparison video and do not affect measured input/ROI bitrates.",
-		},
+		Notes:         notes,
 	}
 
 	artifacts := []string{baseline, roiVideo, comparison, preview, bitrateReportPath}

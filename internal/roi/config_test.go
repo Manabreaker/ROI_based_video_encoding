@@ -7,6 +7,9 @@ func validTestConfig() Config {
 		Input:                "input.mp4",
 		TargetBitrate:        "500k",
 		Tolerance:            0.07,
+		ROIControl:           "qp-map",
+		ROIQOffset:           -0.30,
+		ROIMiddleQOffset:     -0.10,
 		ROIHighQualityCRF:    16,
 		ROIMinCRF:            10,
 		ROIMaxCRFIfNeeded:    36,
@@ -64,5 +67,23 @@ func TestValidateConfigRejectsBadMiddleSettings(t *testing.T) {
 
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("expected bad middle scale error")
+	}
+}
+
+func TestValidateConfigRejectsBadROIControl(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.ROIControl = "magic"
+
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("expected bad ROI control error")
+	}
+}
+
+func TestValidateConfigRejectsBadROIQOffset(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.ROIQOffset = -1.5
+
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("expected bad ROI qoffset error")
 	}
 }

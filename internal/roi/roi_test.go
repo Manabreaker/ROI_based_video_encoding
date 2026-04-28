@@ -69,3 +69,27 @@ func TestBuildROIFilterUsesLowMiddleAndROIOverlays(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildROIQPMapFilterUsesAddROI(t *testing.T) {
+	cfg := Config{
+		MiddleMargin:     0.25,
+		ROIQOffset:       -0.30,
+		ROIMiddleQOffset: -0.10,
+	}
+
+	filter := buildROIQPMapFilter(
+		cfg,
+		VideoInfo{Width: 640, Height: 360},
+		ROI{X: 160, Y: 90, W: 160, H: 90},
+	)
+
+	for _, part := range []string{
+		"addroi=x=120:y=68:w=240:h=134:qoffset=-0.1000:clear=1",
+		"addroi=x=160:y=90:w=160:h=90:qoffset=-0.3000",
+		"format=yuv420p[v]",
+	} {
+		if !strings.Contains(filter, part) {
+			t.Fatalf("QP-map filter does not contain %q:\n%s", part, filter)
+		}
+	}
+}

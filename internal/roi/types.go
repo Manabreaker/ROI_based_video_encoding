@@ -15,11 +15,14 @@ type Config struct {
 	Tolerance     float64 `yaml:"tolerance"`
 
 	// ROI quality policy.
-	FitROI              bool `yaml:"fit-roi"`
-	ROIHighQualityCRF   int  `yaml:"roi-crf"`
-	ROIMinCRF           int  `yaml:"roi-min-crf"`
-	ROIMaxCRFIfNeeded   int  `yaml:"roi-max-crf-if-needed"`
-	AllowROIQualityLoss bool `yaml:"allow-roi-quality-loss"`
+	ROIControl          string  `yaml:"roi-control"`
+	ROIQOffset          float64 `yaml:"roi-qoffset"`
+	ROIMiddleQOffset    float64 `yaml:"roi-middle-qoffset"`
+	FitROI              bool    `yaml:"fit-roi"`
+	ROIHighQualityCRF   int     `yaml:"roi-crf"`
+	ROIMinCRF           int     `yaml:"roi-min-crf"`
+	ROIMaxCRFIfNeeded   int     `yaml:"roi-max-crf-if-needed"`
+	AllowROIQualityLoss bool    `yaml:"allow-roi-quality-loss"`
 
 	// Periphery degradation settings.
 	ManualPeripheryScale float64 `yaml:"periphery-scale"`
@@ -88,44 +91,53 @@ type Artifact struct {
 
 // Candidate records one tried ROI encoding variant before the final choice.
 type Candidate struct {
-	Kind        string  `json:"kind"`
-	Encoder     string  `json:"encoder,omitempty"`
-	CRF         int     `json:"crf"`
-	RateControl string  `json:"rate_control,omitempty"`
-	Scale       float64 `json:"periphery_scale,omitempty"`
-	Blur        int     `json:"periphery_blur,omitempty"`
-	MiddleScale float64 `json:"middle_scale,omitempty"`
-	MiddleBlur  int     `json:"middle_blur,omitempty"`
-	Kbps        float64 `json:"bitrate_kbps"`
-	ROIYPSNR    float64 `json:"roi_psnr_y_db,omitempty"`
-	Note        string  `json:"note,omitempty"`
-	Path        string  `json:"-"`
+	Kind          string  `json:"kind"`
+	Encoder       string  `json:"encoder,omitempty"`
+	ROIControl    string  `json:"roi_control,omitempty"`
+	CRF           int     `json:"crf"`
+	RateControl   string  `json:"rate_control,omitempty"`
+	ROIQOffset    float64 `json:"roi_qoffset,omitempty"`
+	MiddleQOffset float64 `json:"middle_qoffset,omitempty"`
+	Scale         float64 `json:"periphery_scale,omitempty"`
+	Blur          int     `json:"periphery_blur,omitempty"`
+	MiddleScale   float64 `json:"middle_scale,omitempty"`
+	MiddleBlur    int     `json:"middle_blur,omitempty"`
+	Kbps          float64 `json:"bitrate_kbps"`
+	ROIYPSNR      float64 `json:"roi_psnr_y_db,omitempty"`
+	Note          string  `json:"note,omitempty"`
+	Path          string  `json:"-"`
 }
 
 // CandidateSummary is the report-safe view of a Candidate.
 type CandidateSummary struct {
-	Kind        string  `json:"kind"`
-	Encoder     string  `json:"encoder,omitempty"`
-	CRF         int     `json:"crf"`
-	RateControl string  `json:"rate_control,omitempty"`
-	Scale       float64 `json:"periphery_scale,omitempty"`
-	Blur        int     `json:"periphery_blur,omitempty"`
-	MiddleScale float64 `json:"middle_scale,omitempty"`
-	MiddleBlur  int     `json:"middle_blur,omitempty"`
-	Kbps        float64 `json:"bitrate_kbps"`
-	ROIYPSNR    float64 `json:"roi_psnr_y_db,omitempty"`
-	Note        string  `json:"note,omitempty"`
+	Kind          string  `json:"kind"`
+	Encoder       string  `json:"encoder,omitempty"`
+	ROIControl    string  `json:"roi_control,omitempty"`
+	CRF           int     `json:"crf"`
+	RateControl   string  `json:"rate_control,omitempty"`
+	ROIQOffset    float64 `json:"roi_qoffset,omitempty"`
+	MiddleQOffset float64 `json:"middle_qoffset,omitempty"`
+	Scale         float64 `json:"periphery_scale,omitempty"`
+	Blur          int     `json:"periphery_blur,omitempty"`
+	MiddleScale   float64 `json:"middle_scale,omitempty"`
+	MiddleBlur    int     `json:"middle_blur,omitempty"`
+	Kbps          float64 `json:"bitrate_kbps"`
+	ROIYPSNR      float64 `json:"roi_psnr_y_db,omitempty"`
+	Note          string  `json:"note,omitempty"`
 }
 
 // EncodeDecision explains the chosen settings and measured result for one side of the comparison.
 type EncodeDecision struct {
 	Name            string             `json:"name"`
 	Encoder         string             `json:"encoder,omitempty"`
+	ROIControl      string             `json:"roi_control,omitempty"`
 	TargetKbps      float64            `json:"target_kbps,omitempty"`
 	ActualKbps      float64            `json:"actual_kbps"`
 	WithinTolerance bool               `json:"within_tolerance"`
 	CRF             int                `json:"crf,omitempty"`
 	RateControl     string             `json:"rate_control,omitempty"`
+	ROIQOffset      float64            `json:"roi_qoffset,omitempty"`
+	MiddleQOffset   float64            `json:"middle_qoffset,omitempty"`
 	Scale           float64            `json:"periphery_scale,omitempty"`
 	Blur            int                `json:"periphery_blur,omitempty"`
 	MiddleScale     float64            `json:"middle_scale,omitempty"`

@@ -17,6 +17,9 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 	}
 
 	rateControl := roiRateControl(cfg)
+	if roiControl(cfg) == "qp-map" {
+		return renderROIQPMapToTarget(cfg, info, roi, targetKbps, output, workDir, rateControl)
+	}
 
 	if !cfg.FitROI {
 		path := filepath.Join(workDir, fmt.Sprintf("roi_manual_%s.mp4", rateControl))
@@ -181,6 +184,88 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 		ROIYPSNR:        best.ROIYPSNR,
 		Note:            note,
 		Candidates:      candidateSummaries(candidates),
+	}, nil
+}
+
+func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, output string, workDir string, rateControl string) (EncodeDecision, error) {
+	path := filepath.Join(workDir, fmt.Sprintf("roi_qp_map_%s.mp4", rateControl))
+
+	if err := renderROIQPMapCandidate(cfg, info, roi, path, cfg.ROIHighQualityCRF, targetKbps); err != nil {
+		return EncodeDecision{}, err
+	}
+
+	actual, err := measuredAverageBitrateKbps(path)
+	if err != nil {
+		return EncodeDecision{}, err
+	}
+
+	c := Candidate{
+		Kind:          qpMapCandidateKind(rateControl),
+		Encoder:       cfg.VideoEncoder,
+		ROIControl:    "qp-map",
+		CRF:           cfg.ROIHighQualityCRF,
+		RateControl:   rateControl,
+		ROIQOffset:    cfg.ROIQOffset,
+		MiddleQOffset: cfg.ROIMiddleQOffset,
+		Kbps:          actual,
+		Path:          path,
+		Note:          "encoder-level ROI side data via FFmpeg addroi",
+	}
+	if cfg.ROIFitMetric {
+		if err := attachROIPSNRMetric(cfg, roi, &c, filepath.Join(workDir, "roi_qp_map_psnr.log")); err != nil {
+			fmt.Printf("      warning: ROI candidate metric failed: %v\n", err)
+		}
+	}
+
+	if c.ROIYPSNR > 0 {
+		fmt.Printf("      ROI QP-map candidate %s/%s, CRF %2d, middle qoffset %.3f, ROI qoffset %.3f -> %.1f kbps, ROI PSNR-Y %.2f dB\n",
+			c.Encoder,
+			c.RateControl,
+			c.CRF,
+			c.MiddleQOffset,
+			c.ROIQOffset,
+			c.Kbps,
+			c.ROIYPSNR,
+		)
+	} else {
+		fmt.Printf("      ROI QP-map candidate %s/%s, CRF %2d, middle qoffset %.3f, ROI qoffset %.3f -> %.1f kbps\n",
+			c.Encoder,
+			c.RateControl,
+			c.CRF,
+			c.MiddleQOffset,
+			c.ROIQOffset,
+			c.Kbps,
+		)
+	}
+
+	if err := copyFile(path, output); err != nil {
+		return EncodeDecision{}, err
+	}
+
+	note := "encoder-level ROI QP map via FFmpeg addroi side data; pixels are not preprocessed before encoding"
+	if isNVENC(cfg) {
+		note += "; spatial AQ is enabled for NVENC ROI handling"
+	} else {
+		note += "; x264 AQ is enabled because libx264 requires adaptive quantization for ROI side data"
+	}
+	if !withinTolerance(actual, targetKbps, cfg.Tolerance) {
+		note += "; measured bitrate is outside tolerance"
+	}
+
+	return EncodeDecision{
+		Name:            "roi",
+		Encoder:         cfg.VideoEncoder,
+		ROIControl:      "qp-map",
+		TargetKbps:      targetKbps,
+		ActualKbps:      actual,
+		WithinTolerance: withinTolerance(actual, targetKbps, cfg.Tolerance),
+		CRF:             cfg.ROIHighQualityCRF,
+		RateControl:     rateControl,
+		ROIQOffset:      cfg.ROIQOffset,
+		MiddleQOffset:   cfg.ROIMiddleQOffset,
+		ROIYPSNR:        c.ROIYPSNR,
+		Note:            note,
+		Candidates:      []CandidateSummary{candidateSummary(c)},
 	}, nil
 }
 
@@ -374,6 +459,85 @@ func renderROICandidate(cfg Config, info VideoInfo, roi ROI, output string, crf 
 	return renderROICandidateCRF(cfg, info, roi, output, crf, scale, blur)
 }
 
+func renderROIQPMapCandidate(cfg Config, info VideoInfo, roi ROI, output string, crf int, targetKbps float64) error {
+	if roiRateControl(cfg) == "abr" {
+		return renderROIQPMapCandidateABR(cfg, info, roi, output, targetKbps)
+	}
+	return renderROIQPMapCandidateCRF(cfg, info, roi, output, crf)
+}
+
+func renderROIQPMapCandidateCRF(cfg Config, info VideoInfo, roi ROI, output string, crf int) error {
+	filter := buildROIQPMapFilter(cfg, info, roi)
+
+	args := []string{
+		"-hide_banner",
+		"-y",
+		"-i", cfg.Input,
+		"-filter_complex", filter,
+		"-map", "[v]",
+		"-an",
+		"-pix_fmt", "yuv420p",
+	}
+	args = append(args, qpMapQualityEncoderArgs(cfg, crf)...)
+	args = append(args, "-movflags", "+faststart", output)
+
+	return runCommand("ffmpeg", args...)
+}
+
+func renderROIQPMapCandidateABR(cfg Config, info VideoInfo, roi ROI, output string, targetKbps float64) error {
+	if targetKbps <= 0 {
+		return errors.New("targetKbps must be greater than zero for ROI QP-map ABR encoding")
+	}
+
+	filter := buildROIQPMapFilter(cfg, info, roi)
+	bitrate, maxrate, bufsize := roiRateArgs(cfg, targetKbps)
+
+	baseArgs := []string{
+		"-hide_banner",
+		"-y",
+		"-i", cfg.Input,
+		"-filter_complex", filter,
+		"-map", "[v]",
+		"-an",
+		"-pix_fmt", "yuv420p",
+	}
+	baseArgs = append(baseArgs, qpMapBitrateEncoderArgs(cfg, bitrate, maxrate, bufsize)...)
+
+	if gop := gopSize(info); gop > 0 {
+		baseArgs = append(baseArgs, "-g", strconv.Itoa(gop))
+	}
+
+	if !cfg.ROITwoPass || isNVENC(cfg) {
+		args := append([]string{}, baseArgs...)
+		args = append(args, "-movflags", "+faststart", output)
+		return runCommand("ffmpeg", args...)
+	}
+
+	passlog := output + ".passlog"
+	defer cleanupPassLogs(passlog)
+
+	firstPass := append([]string{}, baseArgs...)
+	firstPass = append(firstPass,
+		"-pass", "1",
+		"-passlogfile", passlog,
+		"-f", "null",
+		nullOutputName(),
+	)
+	if err := runCommand("ffmpeg", firstPass...); err != nil {
+		return err
+	}
+
+	secondPass := append([]string{}, baseArgs...)
+	secondPass = append(secondPass,
+		"-pass", "2",
+		"-passlogfile", passlog,
+		"-movflags", "+faststart",
+		output,
+	)
+
+	return runCommand("ffmpeg", secondPass...)
+}
+
 // renderROICandidateCRF encodes an ROI candidate with fixed quality settings.
 func renderROICandidateCRF(cfg Config, info VideoInfo, roi ROI, output string, crf int, scale float64, blur int) error {
 	filter := buildROIFilter(cfg, info, roi, scale, blur)
@@ -446,6 +610,43 @@ func renderROICandidateABR(cfg Config, info VideoInfo, roi ROI, output string, s
 	)
 
 	return runCommand("ffmpeg", secondPass...)
+}
+
+// buildROIQPMapFilter attaches encoder-level ROI side data without changing pixels.
+func buildROIQPMapFilter(cfg Config, info VideoInfo, roi ROI) string {
+	middle := middleROI(cfg, roi, info)
+
+	var parts []string
+	if cfg.ROIMiddleQOffset != 0 {
+		parts = append(parts, fmt.Sprintf(
+			"addroi=x=%d:y=%d:w=%d:h=%d:qoffset=%.4f:clear=1",
+			middle.X,
+			middle.Y,
+			middle.W,
+			middle.H,
+			cfg.ROIMiddleQOffset,
+		))
+		parts = append(parts, fmt.Sprintf(
+			"addroi=x=%d:y=%d:w=%d:h=%d:qoffset=%.4f",
+			roi.X,
+			roi.Y,
+			roi.W,
+			roi.H,
+			cfg.ROIQOffset,
+		))
+	} else {
+		parts = append(parts, fmt.Sprintf(
+			"addroi=x=%d:y=%d:w=%d:h=%d:qoffset=%.4f:clear=1",
+			roi.X,
+			roi.Y,
+			roi.W,
+			roi.H,
+			cfg.ROIQOffset,
+		))
+	}
+	parts = append(parts, "format=yuv420p[v]")
+
+	return strings.Join(parts, ",")
 }
 
 // buildROIFilter creates low, middle, and original-ROI layers before final encoding.

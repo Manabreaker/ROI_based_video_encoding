@@ -58,6 +58,9 @@ func defaultConfig() Config {
 		Mode:                 "static",
 		TargetBitrate:        "1000k",
 		Tolerance:            0.07,
+		ROIControl:           "qp-map",
+		ROIQOffset:           -0.30,
+		ROIMiddleQOffset:     -0.10,
 		FitROI:               true,
 		ROIHighQualityCRF:    16,
 		ROIMinCRF:            10,
@@ -104,6 +107,9 @@ func registerConfigFlags(fs *flag.FlagSet, cfg *Config, configPath *string) {
 	fs.StringVar(&cfg.TargetBitrate, "target-bitrate", cfg.TargetBitrate, "target actual bitrate, e.g. 300k, 1000k, 1.5M")
 	fs.Float64Var(&cfg.Tolerance, "tolerance", cfg.Tolerance, "acceptable relative bitrate error, e.g. 0.07 means +-7%")
 
+	fs.StringVar(&cfg.ROIControl, "roi-control", cfg.ROIControl, "ROI control method: qp-map or mask")
+	fs.Float64Var(&cfg.ROIQOffset, "roi-qoffset", cfg.ROIQOffset, "QP offset for the main ROI in --roi-control=qp-map; negative values improve quality")
+	fs.Float64Var(&cfg.ROIMiddleQOffset, "roi-middle-qoffset", cfg.ROIMiddleQOffset, "QP offset for the middle ROI ring in --roi-control=qp-map; 0 disables the middle ROI side data")
 	fs.BoolVar(&cfg.FitROI, "fit-roi", cfg.FitROI, "fit ROI output by changing periphery degradation")
 	fs.IntVar(&cfg.ROIHighQualityCRF, "roi-crf", cfg.ROIHighQualityCRF, "CRF used for final ROI output; lower means closer to original ROI")
 	fs.IntVar(&cfg.ROIMinCRF, "roi-min-crf", cfg.ROIMinCRF, "minimum CRF used when the video is too simple and target bitrate is higher than full-detail output")

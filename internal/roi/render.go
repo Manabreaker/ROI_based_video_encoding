@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const nvencH264MaxWidth = 4096
+
 // renderComparison creates the side-by-side input-vs-ROI video with text overlays and ROI boxes.
 func renderComparison(
 	cfg Config,
@@ -19,11 +21,48 @@ func renderComparison(
 	baselineDecision EncodeDecision,
 	roiDecision EncodeDecision,
 ) error {
+	filter, scaled, err := buildComparisonFilter(cfg, baselineSamples, roiSamples, info, roi, baselineDecision, roiDecision)
+	if err != nil {
+		return err
+	}
+	if scaled {
+		fmt.Printf("      note: scaling comparison to %d px width to fit h264_nvenc H.264 width limit; ROI output stays %dx%d\n",
+			nvencH264MaxWidth,
+			info.Width,
+			info.Height,
+		)
+	}
+
+	args := []string{
+		"-hide_banner",
+		"-y",
+		"-i", baseline,
+		"-i", roiVideo,
+		"-filter_complex", filter,
+		"-map", "[v]",
+		"-an",
+		"-pix_fmt", "yuv420p",
+	}
+	args = append(args, qualityEncoderArgs(cfg, 18)...)
+	args = append(args, "-movflags", "+faststart", output)
+
+	return runCommand("ffmpeg", args...)
+}
+
+func buildComparisonFilter(
+	cfg Config,
+	baselineSamples []BitrateSample,
+	roiSamples []BitrateSample,
+	info VideoInfo,
+	roi ROI,
+	baselineDecision EncodeDecision,
+	roiDecision EncodeDecision,
+) (string, bool, error) {
 	var prefix string
 
 	if cfg.OverlayBitrate {
 		if len(baselineSamples) > cfg.MaxBitrateOverlays || len(roiSamples) > cfg.MaxBitrateOverlays {
-			return fmt.Errorf(
+			return "", false, fmt.Errorf(
 				"too many bitrate overlay windows: baseline=%d roi=%d cap=%d; increase --bitrate-window or --max-bitrate-overlays",
 				len(baselineSamples),
 				len(roiSamples),
@@ -66,13 +105,6 @@ func renderComparison(
 		roi.H,
 	)
 
-	rightLowBox := fmt.Sprintf(
-		"drawbox=x=%d:y=0:w=%d:h=%d:color=red@0.90:t=5",
-		info.Width,
-		info.Width,
-		info.Height,
-	)
-
 	rightMiddleBox := fmt.Sprintf(
 		"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=5",
 		info.Width+middle.X,
@@ -89,28 +121,30 @@ func renderComparison(
 		roi.H,
 	)
 
-	filter := prefix + fmt.Sprintf(
-		"[left][right]hstack=inputs=2,%s,%s,%s,%s,format=yuv420p[v]",
-		leftROIBox,
-		rightLowBox,
-		rightMiddleBox,
-		rightROIBox,
-	)
-
-	args := []string{
-		"-hide_banner",
-		"-y",
-		"-i", baseline,
-		"-i", roiVideo,
-		"-filter_complex", filter,
-		"-map", "[v]",
-		"-an",
-		"-pix_fmt", "yuv420p",
+	boxes := []string{leftROIBox}
+	if roiDecision.ROIControl != "qp-map" {
+		boxes = append(boxes, fmt.Sprintf(
+			"drawbox=x=%d:y=0:w=%d:h=%d:color=red@0.90:t=5",
+			info.Width,
+			info.Width,
+			info.Height,
+		))
 	}
-	args = append(args, qualityEncoderArgs(cfg, 18)...)
-	args = append(args, "-movflags", "+faststart", output)
+	boxes = append(boxes, rightMiddleBox, rightROIBox)
 
-	return runCommand("ffmpeg", args...)
+	scaled := shouldScaleComparisonForNVENC(cfg, info)
+	chain := []string{"[left][right]hstack=inputs=2"}
+	chain = append(chain, boxes...)
+	if scaled {
+		chain = append(chain, fmt.Sprintf("scale=w=%d:h=-2", nvencH264MaxWidth))
+	}
+	chain = append(chain, "format=yuv420p")
+
+	return prefix + strings.Join(chain, ",") + "[v]", scaled, nil
+}
+
+func shouldScaleComparisonForNVENC(cfg Config, info VideoInfo) bool {
+	return isNVENC(cfg) && info.Width > 0 && info.Width*2 > nvencH264MaxWidth
 }
 
 // drawPanelTextChain builds drawtext filters with per-window current bitrate labels.
@@ -173,6 +207,17 @@ func panelBaseFilters(title string, decision EncodeDecision, isROI bool) []strin
 
 	line4 := ""
 	if isROI {
+		if decision.ROIControl == "qp-map" {
+			line3 = fmt.Sprintf("%s | %s QP-map", status, strings.ToUpper(strings.TrimSpace(decision.RateControl)))
+			line4 = fmt.Sprintf("ROI qoffset %.2f | MID %.2f", decision.ROIQOffset, decision.MiddleQOffset)
+			return []string{
+				drawTextFilter(title, 24, 24, 28, "white", "black@0.65", ""),
+				drawTextFilter(line2, 24, 64, 22, "white", "black@0.65", ""),
+				drawTextFilter(line3, 24, 98, 21, "white", "black@0.65", ""),
+				drawTextFilter(line4, 24, 132, 21, "white", "black@0.65", ""),
+			}
+		}
+
 		rateControl := strings.ToUpper(strings.TrimSpace(decision.RateControl))
 		middleScale := decision.MiddleScale
 		if middleScale <= 0 {
@@ -236,22 +281,18 @@ func renderPreview(cfg Config, info VideoInfo, roi ROI, output string) error {
 	}
 
 	middle := middleROI(cfg, roi, info)
-
-	filter := fmt.Sprintf(
-		"drawbox=x=0:y=0:w=%d:h=%d:color=red@0.90:t=6,"+
-			"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=6,"+
-			"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.95:t=6,format=rgb24",
-		info.Width,
-		info.Height,
-		middle.X,
-		middle.Y,
-		middle.W,
-		middle.H,
-		roi.X,
-		roi.Y,
-		roi.W,
-		roi.H,
+	var boxes []string
+	if roiControl(cfg) != "qp-map" {
+		boxes = append(boxes, fmt.Sprintf("drawbox=x=0:y=0:w=%d:h=%d:color=red@0.90:t=6", info.Width, info.Height))
+	}
+	boxes = append(
+		boxes,
+		fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=6", middle.X, middle.Y, middle.W, middle.H),
+		fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.95:t=6", roi.X, roi.Y, roi.W, roi.H),
+		"format=rgb24",
 	)
+
+	filter := strings.Join(boxes, ",")
 
 	args := []string{
 		"-hide_banner",

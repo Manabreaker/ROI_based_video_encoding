@@ -20,6 +20,17 @@ func validateConfig(cfg Config) error {
 	if cfg.ROIHighQualityCRF < 0 || cfg.ROIHighQualityCRF > 51 {
 		return errors.New("--roi-crf must be in range 0..51")
 	}
+	switch roiControl(cfg) {
+	case "qp-map", "mask":
+	default:
+		return errors.New("--roi-control must be either qp-map or mask")
+	}
+	if cfg.ROIQOffset < -1 || cfg.ROIQOffset > 1 {
+		return errors.New("--roi-qoffset must be in range [-1,1]")
+	}
+	if cfg.ROIMiddleQOffset < -1 || cfg.ROIMiddleQOffset > 1 {
+		return errors.New("--roi-middle-qoffset must be in range [-1,1]")
+	}
 	if cfg.ROIMinCRF < 0 || cfg.ROIMinCRF > cfg.ROIHighQualityCRF {
 		return errors.New("--roi-min-crf must be in range 0..roi-crf")
 	}
