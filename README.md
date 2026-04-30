@@ -112,6 +112,26 @@ roi-blocks:
 
 `col` и `row` - индексы блоков, не пиксели. `w` и `h` задаются тоже в блоках; если их не указать, используется один блок 64x64. Пример лежит в [config/qp_block_map_example.yaml](config/qp_block_map_example.yaml).
 
+## ROI block painter UI
+
+Для ручной разметки блочной QP-map можно запустить отдельный локальный UI:
+
+```bash
+go run ./cmd/roi-map-ui \
+  --input examples/ball.mp4 \
+  --config-out config/roi_blocks_generated.yaml \
+  --out out/roi_blocks_generated \
+  --target-bitrate 500k
+```
+
+Программа поднимает маленький localhost-сервер, открывает страницу в браузере и позволяет рисовать блоки поверх видео. Кнопка `Confirm` записывает готовый YAML config, который затем запускается обычным encoder CLI:
+
+```bash
+go run ./cmd/roi --config config/roi_blocks_generated.yaml
+```
+
+По умолчанию палитра задает `qoffset`: green `-0.40`, orange `-0.25`, yellow `-0.10`, red `+0.15`. Карта статична для всего видео; ползунок нужен только чтобы выбрать удобный кадр для рисования.
+
 ## Что появится в output-директории
 
 После успешного запуска в `--out` создаются:
