@@ -1,4 +1,4 @@
-module github.com/Manabreaker/ROI_based_video_streaming
+module github.com/Manabreaker/ROI_based_video_encoding
 
 go 1.26
 
