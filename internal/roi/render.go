@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const nvencH264MaxWidth = 4096
+const hardwareH264ComparisonMaxWidth = 4096
 
 // renderComparison creates the side-by-side input-vs-ROI video with text overlays and ROI boxes.
 func renderComparison(
@@ -26,8 +26,8 @@ func renderComparison(
 		return err
 	}
 	if scaled {
-		fmt.Printf("      note: scaling comparison to %d px width to fit h264_nvenc H.264 width limit; ROI output stays %dx%d\n",
-			nvencH264MaxWidth,
+		fmt.Printf("      note: scaling comparison to %d px width to fit hardware H.264 encoder limits; ROI output stays %dx%d\n",
+			hardwareH264ComparisonMaxWidth,
 			info.Width,
 			info.Height,
 		)
@@ -100,19 +100,19 @@ func buildComparisonFilter(
 		return "", false, err
 	}
 
-	scaled := shouldScaleComparisonForNVENC(cfg, info)
+	scaled := shouldScaleComparisonForHardwareH264(cfg, info)
 	chain := []string{"[left][right]hstack=inputs=2"}
 	chain = append(chain, boxes...)
 	if scaled {
-		chain = append(chain, fmt.Sprintf("scale=w=%d:h=-2", nvencH264MaxWidth))
+		chain = append(chain, fmt.Sprintf("scale=w=%d:h=-2", hardwareH264ComparisonMaxWidth))
 	}
 	chain = append(chain, "format=yuv420p")
 
 	return prefix + strings.Join(chain, ",") + "[v]", scaled, nil
 }
 
-func shouldScaleComparisonForNVENC(cfg Config, info VideoInfo) bool {
-	return isNVENC(cfg) && info.Width > 0 && info.Width*2 > nvencH264MaxWidth
+func shouldScaleComparisonForHardwareH264(cfg Config, info VideoInfo) bool {
+	return isHardwareVideoEncoder(cfg) && info.Width > 0 && info.Width*2 > hardwareH264ComparisonMaxWidth
 }
 
 func comparisonDrawBoxes(cfg Config, info VideoInfo, roi ROI, roiDecision EncodeDecision) ([]string, error) {

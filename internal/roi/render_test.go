@@ -104,27 +104,33 @@ func TestPanelBaseFiltersForBlockQPMapROI(t *testing.T) {
 	}
 }
 
-func TestBuildComparisonFilterScalesWideNVENCHStack(t *testing.T) {
-	filter, scaled, err := buildComparisonFilter(
-		Config{VideoEncoder: "h264_nvenc", NVENCPreset: "p4"},
-		nil,
-		nil,
-		VideoInfo{Width: 3840, Height: 2160},
-		ROI{X: 384, Y: 216, W: 960, H: 540},
-		EncodeDecision{RateControl: "source", ActualKbps: 7000},
-		EncodeDecision{ROIControl: "qp-map", RateControl: "abr", TargetKbps: 3500, ActualKbps: 3500},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !scaled {
-		t.Fatal("expected wide h264_nvenc comparison to be scaled")
-	}
-	if !strings.Contains(filter, "hstack=inputs=2") {
-		t.Fatalf("comparison filter does not contain hstack:\n%s", filter)
-	}
-	if !strings.Contains(filter, "scale=w=4096:h=-2") {
-		t.Fatalf("comparison filter does not limit NVENC width:\n%s", filter)
+func TestBuildComparisonFilterScalesWideHardwareH264HStack(t *testing.T) {
+	for _, cfg := range []Config{
+		{VideoEncoder: "h264_nvenc", NVENCPreset: "p4"},
+		{VideoEncoder: "h264_amf"},
+		{VideoEncoder: "h264_videotoolbox"},
+	} {
+		filter, scaled, err := buildComparisonFilter(
+			cfg,
+			nil,
+			nil,
+			VideoInfo{Width: 3840, Height: 2160},
+			ROI{X: 384, Y: 216, W: 960, H: 540},
+			EncodeDecision{RateControl: "source", ActualKbps: 7000},
+			EncodeDecision{ROIControl: "qp-map", RateControl: "abr", TargetKbps: 3500, ActualKbps: 3500},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !scaled {
+			t.Fatalf("expected wide %s comparison to be scaled", cfg.VideoEncoder)
+		}
+		if !strings.Contains(filter, "hstack=inputs=2") {
+			t.Fatalf("comparison filter does not contain hstack:\n%s", filter)
+		}
+		if !strings.Contains(filter, "scale=w=4096:h=-2") {
+			t.Fatalf("comparison filter does not limit hardware H.264 width:\n%s", filter)
+		}
 	}
 }
 
@@ -142,9 +148,9 @@ func TestBuildComparisonFilterKeepsWideX264HStackFullSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	if scaled {
-		t.Fatal("did not expect libx264 comparison to be scaled for NVENC width")
+		t.Fatal("did not expect libx264 comparison to be scaled for hardware H.264 width")
 	}
 	if strings.Contains(filter, "scale=w=4096:h=-2") {
-		t.Fatalf("x264 comparison filter unexpectedly limits NVENC width:\n%s", filter)
+		t.Fatalf("x264 comparison filter unexpectedly limits hardware H.264 width:\n%s", filter)
 	}
 }
