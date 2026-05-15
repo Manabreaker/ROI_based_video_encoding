@@ -1,0 +1,38 @@
+input: examples/ball.mp4
+out: out/mask_ball
+
+mode: static
+roi: 0.35,0.25,0.30,0.40
+
+target-bitrate: 500k
+tolerance: 0.07
+
+roi-control: mask
+roi-rate-control: abr
+roi-two-pass: false
+
+# В mask-режиме fitting подбирает деградацию периферии около target-bitrate.
+fit-roi: true
+fit-iterations: 7
+
+# Эти значения используются как preferred/manual baseline для подбора,
+# а также как прямые настройки при fit-roi: false.
+periphery-scale: 0.35
+blur: 2
+
+# Middle ring вокруг ROI. Значения не должны быть хуже периферии.
+middle-margin: 0.35
+middle-scale: 0.67
+middle-blur: 1
+
+roi-min-scale: 0.12
+roi-max-blur: 10
+
+encoder: auto
+preset: veryfast
+nvenc-preset: p4
+
+bitrate-window: 2
+overlay-bitrate: true
+metrics: false
+serve: false

@@ -17,8 +17,44 @@ func validateConfig(cfg Config) error {
 	if cfg.Tolerance <= 0 || cfg.Tolerance > 0.50 {
 		return errors.New("--tolerance must be in range (0, 0.5]")
 	}
+	switch roiMode(cfg) {
+	case "static", "motion", "blocks":
+	default:
+		return errors.New("--mode must be static, motion, or blocks")
+	}
 	if cfg.ROIHighQualityCRF < 0 || cfg.ROIHighQualityCRF > 51 {
 		return errors.New("--roi-crf must be in range 0..51")
+	}
+	switch roiControl(cfg) {
+	case "qp-map", "mask":
+	default:
+		return errors.New("--roi-control must be either qp-map or mask")
+	}
+	if cfg.ROIQOffset < -1 || cfg.ROIQOffset > 1 {
+		return errors.New("--roi-qoffset must be in range [-1,1]")
+	}
+	if cfg.ROIMiddleQOffset < -1 || cfg.ROIMiddleQOffset > 1 {
+		return errors.New("--roi-middle-qoffset must be in range [-1,1]")
+	}
+	if cfg.ROIBlockSize <= 0 || cfg.ROIBlockSize%2 != 0 {
+		return errors.New("--roi-block-size must be a positive even integer")
+	}
+	if roiMode(cfg) == "blocks" && len(cfg.ROIBlocks) == 0 {
+		return errors.New("--mode blocks requires --roi-blocks")
+	}
+	if len(cfg.ROIBlocks) > 0 && roiControl(cfg) != "qp-map" {
+		return errors.New("--roi-blocks requires --roi-control qp-map")
+	}
+	for i, b := range cfg.ROIBlocks {
+		if b.Col < 0 || b.Row < 0 {
+			return fmt.Errorf("roi-blocks[%d] col and row must be non-negative", i)
+		}
+		if b.W < 0 || b.H < 0 {
+			return fmt.Errorf("roi-blocks[%d] w and h must be non-negative; omitted or 0 means one block", i)
+		}
+		if b.QOffset < -1 || b.QOffset > 1 {
+			return fmt.Errorf("roi-blocks[%d] qoffset must be in range [-1,1]", i)
+		}
 	}
 	if cfg.ROIMinCRF < 0 || cfg.ROIMinCRF > cfg.ROIHighQualityCRF {
 		return errors.New("--roi-min-crf must be in range 0..roi-crf")

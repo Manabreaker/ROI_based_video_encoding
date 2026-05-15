@@ -484,17 +484,22 @@ func candidatesBySettingOrder(probed map[int]Candidate, count int) []Candidate {
 // candidateSummary removes transient file paths before writing JSON reports.
 func candidateSummary(c Candidate) CandidateSummary {
 	return CandidateSummary{
-		Kind:        c.Kind,
-		Encoder:     c.Encoder,
-		CRF:         c.CRF,
-		RateControl: c.RateControl,
-		Scale:       c.Scale,
-		Blur:        c.Blur,
-		MiddleScale: c.MiddleScale,
-		MiddleBlur:  c.MiddleBlur,
-		Kbps:        c.Kbps,
-		ROIYPSNR:    c.ROIYPSNR,
-		Note:        c.Note,
+		Kind:          c.Kind,
+		Encoder:       c.Encoder,
+		ROIControl:    c.ROIControl,
+		CRF:           c.CRF,
+		RateControl:   c.RateControl,
+		ROIQOffset:    c.ROIQOffset,
+		MiddleQOffset: c.MiddleQOffset,
+		Scale:         c.Scale,
+		Blur:          c.Blur,
+		MiddleScale:   c.MiddleScale,
+		MiddleBlur:    c.MiddleBlur,
+		ROIBlockSize:  c.ROIBlockSize,
+		ROIBlockCount: c.ROIBlockCount,
+		Kbps:          c.Kbps,
+		ROIYPSNR:      c.ROIYPSNR,
+		Note:          c.Note,
 	}
 }
 

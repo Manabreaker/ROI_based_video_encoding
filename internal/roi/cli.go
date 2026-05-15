@@ -49,6 +49,11 @@ func ParseArgs(args []string) (Config, error) {
 		return Config{}, err
 	}
 
+	visited := visitedFlags(fs)
+	if err := normalizeROISelectionConfig(&cfg, visited); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
 }
 
@@ -56,8 +61,12 @@ func defaultConfig() Config {
 	return Config{
 		OutDir:               "out",
 		Mode:                 "static",
+		ROIBlockSize:         defaultROIBlockSize,
 		TargetBitrate:        "1000k",
 		Tolerance:            0.07,
+		ROIControl:           "qp-map",
+		ROIQOffset:           -0.30,
+		ROIMiddleQOffset:     -0.10,
 		FitROI:               true,
 		ROIHighQualityCRF:    16,
 		ROIMinCRF:            10,
@@ -98,12 +107,17 @@ func registerConfigFlags(fs *flag.FlagSet, cfg *Config, configPath *string) {
 
 	fs.StringVar(&cfg.Input, "input", cfg.Input, "input video file, camera URL, RTSP URL, or any FFmpeg-readable source")
 	fs.StringVar(&cfg.OutDir, "out", cfg.OutDir, "output directory")
-	fs.StringVar(&cfg.Mode, "mode", cfg.Mode, "ROI mode: static or motion")
+	fs.StringVar(&cfg.Mode, "mode", cfg.Mode, "ROI mode: static, motion, or blocks")
 	fs.StringVar(&cfg.ROIString, "roi", cfg.ROIString, "static ROI as x,y,w,h; pixels or fractions 0..1; if empty, center ROI is used")
+	fs.IntVar(&cfg.ROIBlockSize, "roi-block-size", cfg.ROIBlockSize, "QP-map block size in pixels for --mode=blocks")
+	fs.Var(roiBlocksFlag{target: &cfg.ROIBlocks}, "roi-blocks", "QP-map blocks as col,row,qoffset or col,row,w,h,qoffset entries separated by semicolons")
 
 	fs.StringVar(&cfg.TargetBitrate, "target-bitrate", cfg.TargetBitrate, "target actual bitrate, e.g. 300k, 1000k, 1.5M")
 	fs.Float64Var(&cfg.Tolerance, "tolerance", cfg.Tolerance, "acceptable relative bitrate error, e.g. 0.07 means +-7%")
 
+	fs.StringVar(&cfg.ROIControl, "roi-control", cfg.ROIControl, "ROI control method: qp-map or mask")
+	fs.Float64Var(&cfg.ROIQOffset, "roi-qoffset", cfg.ROIQOffset, "QP offset for the main ROI in --roi-control=qp-map; negative values improve quality")
+	fs.Float64Var(&cfg.ROIMiddleQOffset, "roi-middle-qoffset", cfg.ROIMiddleQOffset, "QP offset for the middle ROI ring in --roi-control=qp-map; 0 disables the middle ROI side data")
 	fs.BoolVar(&cfg.FitROI, "fit-roi", cfg.FitROI, "fit ROI output by changing periphery degradation")
 	fs.IntVar(&cfg.ROIHighQualityCRF, "roi-crf", cfg.ROIHighQualityCRF, "CRF used for final ROI output; lower means closer to original ROI")
 	fs.IntVar(&cfg.ROIMinCRF, "roi-min-crf", cfg.ROIMinCRF, "minimum CRF used when the video is too simple and target bitrate is higher than full-detail output")
@@ -143,6 +157,38 @@ func registerConfigFlags(fs *flag.FlagSet, cfg *Config, configPath *string) {
 	fs.BoolVar(&cfg.Serve, "serve", cfg.Serve, "start local HTTP server after processing")
 	fs.StringVar(&cfg.HTTPAddr, "http", cfg.HTTPAddr, "HTTP address for --serve")
 	fs.BoolVar(&cfg.KeepTemp, "keep-temp", cfg.KeepTemp, "keep temporary candidate files")
+}
+
+func visitedFlags(fs *flag.FlagSet) map[string]bool {
+	visited := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+	return visited
+}
+
+func normalizeROISelectionConfig(cfg *Config, visited map[string]bool) error {
+	if visited["roi"] && visited["roi-blocks"] && len(cfg.ROIBlocks) > 0 {
+		return errors.New("--roi and --roi-blocks cannot be used together")
+	}
+
+	if visited["roi"] && !visited["roi-blocks"] {
+		cfg.ROIBlocks = nil
+		if !visited["mode"] && roiMode(*cfg) == "blocks" {
+			cfg.Mode = "static"
+		}
+	}
+	if visited["mode"] && roiMode(*cfg) != "blocks" && !visited["roi-blocks"] {
+		cfg.ROIBlocks = nil
+	}
+	if usesROIBlockMap(*cfg) {
+		cfg.Mode = "blocks"
+		cfg.ROIString = ""
+	} else if visited["roi-blocks"] && !visited["mode"] && roiMode(*cfg) == "blocks" {
+		cfg.Mode = "static"
+	}
+
+	return nil
 }
 
 func extractConfigPath(args []string) (string, []string, error) {

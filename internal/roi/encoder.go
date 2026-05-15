@@ -95,6 +95,23 @@ func bitrateEncoderArgs(cfg Config, bitrate string, maxrate string, bufsize stri
 	}
 }
 
+func qpMapQualityEncoderArgs(cfg Config, quality int) []string {
+	args := qualityEncoderArgs(cfg, quality)
+	return appendROIEncoderArgs(cfg, args)
+}
+
+func qpMapBitrateEncoderArgs(cfg Config, bitrate string, maxrate string, bufsize string) []string {
+	args := bitrateEncoderArgs(cfg, bitrate, maxrate, bufsize)
+	return appendROIEncoderArgs(cfg, args)
+}
+
+func appendROIEncoderArgs(cfg Config, args []string) []string {
+	if isNVENC(cfg) {
+		return append(args, "-spatial-aq", "1")
+	}
+	return append(args, "-aq-mode", "1")
+}
+
 // isNVENC reports whether the resolved encoder uses NVIDIA's hardware encoder.
 func isNVENC(cfg Config) bool {
 	return normalizeVideoEncoder(cfg.VideoEncoder) == "h264_nvenc"
@@ -164,10 +181,29 @@ func roiRateControl(cfg Config) string {
 	return rc
 }
 
+func roiControl(cfg Config) string {
+	control := strings.ToLower(strings.TrimSpace(cfg.ROIControl))
+	switch control {
+	case "", "qpmap", "qp_map", "qp-map":
+		return "qp-map"
+	case "mask", "preprocess", "preprocessing":
+		return "mask"
+	default:
+		return control
+	}
+}
+
 // roiCandidateKind labels candidates by their encoding mode.
 func roiCandidateKind(rateControl string) string {
 	if rateControl == "abr" {
 		return "roi-target-abr"
 	}
 	return "roi-preserve-roi-crf"
+}
+
+func qpMapCandidateKind(rateControl string) string {
+	if rateControl == "abr" {
+		return "roi-qp-map-abr"
+	}
+	return "roi-qp-map-crf"
 }

@@ -21,16 +21,16 @@ ROI_based_video_encoding - учебный PoC, который демонстри
 Реализация находится на уровне PoC:
 
 - входное видео используется как baseline и не перекодируется;
-- ROI output создается через FFmpeg filter graph;
-- поддерживается одна прямоугольная ROI;
-- ROI можно задать вручную или выбрать простой motion-эвристикой;
-- вокруг ROI создается middle ring, чтобы переход качества был менее резким;
-- периферия кадра downscale/upscale и blur ухудшают менее важную область;
+- ROI output по умолчанию создается через encoder-level ROI side data;
+- поддерживается прямоугольная ROI или блочная QP-map по сетке 64x64;
+- ROI можно задать вручную, блоками или выбрать простой motion-эвристикой;
+- вокруг прямоугольной ROI создается middle ring с более мягким QP offset;
+- старый mask-based режим с downscale/upscale и blur периферии доступен через `--roi-control mask`;
 - результат кодируется в H.264 через `libx264` или `h264_nvenc`;
 - сравнение сохраняется как side-by-side видео с bitrate overlay;
 - отчеты пишутся в JSON.
 
-Это не система потоковой доставки и не настоящий encoder-level ROI/QP-map. Качество распределяется preprocessing-ом до финального encode, а результат сохраняется как локальные output-файлы.
+Это не production streaming stack: нет доставки потока, realtime tracking и codec-specific QP map API. Но основной PoC теперь использует FFmpeg `addroi` как encoder-level ROI/QP-map подсказку, а результат сохраняется как локальные output-файлы.
 
 ## Pipeline
 
@@ -143,7 +143,8 @@ cmd/roi/main.go            CLI entrypoint
 internal/roi/app.go        orchestration pipeline
 internal/roi/cli.go        CLI flags
 internal/roi/config.go     validation
-internal/roi/roi.go        static and motion ROI selection
+internal/roi/roi.go        static, motion and block ROI selection
+internal/roi/qp_blocks.go  64px QP-map block parsing and geometry
 internal/roi/encode.go     ROI filter graph, candidates and fitting
 internal/roi/encoder.go    libx264/NVENC selection and args
 internal/roi/bitrate.go    bitrate windows from ffprobe packets
@@ -168,8 +169,8 @@ Docker нужен не для алгоритма, а для воспроизво
 - нет object detection, saliency map или gaze tracking;
 - нет realtime tracking ROI по каждому кадру;
 - нет WebRTC, DASH, RTSP или другого слоя доставки, streaming не входит в обязательный scope проекта;
-- нет encoder-level QP-map, tiles или subpictures;
-- fitting кодирует несколько probe-кандидатов, что подходит для PoC, но не для realtime pipeline;
+- QP-map реализован через FFmpeg `addroi`; фактический эффект зависит от поддержки ROI side data конкретным энкодером;
+- mask fitting кодирует несколько probe-кандидатов, что подходит для PoC, но не для realtime pipeline;
 - baseline - исходный input, поэтому сравнение показывает input vs ROI output, а не два перекодированных потока.
 
 ## Дальнейшие расширения

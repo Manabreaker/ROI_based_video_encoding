@@ -7,6 +7,7 @@
 
 # Demonstration exclude paths
 demo_out
+config/roi_blocks_generated.yaml
 
 # Nextcloud exclude paths
 nextcloud

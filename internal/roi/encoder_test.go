@@ -62,3 +62,15 @@ func TestBitrateEncoderArgsForNVENC(t *testing.T) {
 		t.Fatalf("bitrateEncoderArgs = %#v, want %#v", got, want)
 	}
 }
+
+func TestQPMapEncoderArgsEnableAQ(t *testing.T) {
+	x264 := qpMapBitrateEncoderArgs(Config{VideoEncoder: "libx264", Preset: "veryfast"}, "500k", "575k", "1000k")
+	if !reflect.DeepEqual(x264[len(x264)-2:], []string{"-aq-mode", "1"}) {
+		t.Fatalf("x264 QP-map args tail = %#v, want AQ enabled", x264)
+	}
+
+	nvenc := qpMapQualityEncoderArgs(Config{VideoEncoder: "h264_nvenc", NVENCPreset: "p4"}, 18)
+	if !reflect.DeepEqual(nvenc[len(nvenc)-2:], []string{"-spatial-aq", "1"}) {
+		t.Fatalf("NVENC QP-map args tail = %#v, want spatial AQ enabled", nvenc)
+	}
+}

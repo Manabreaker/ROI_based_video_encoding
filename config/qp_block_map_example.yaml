@@ -1,0 +1,43 @@
+input: examples/ball.mp4
+out: out/qp_block_map_ball
+
+mode: blocks
+roi-control: qp-map
+
+# Кадр делится на сетку 64x64 пикселя.
+# col/row - индексы блоков, а не пиксельные координаты.
+roi-block-size: 64
+roi-blocks:
+  # Сильное улучшение качества для основной области.
+  - col: 4
+    row: 2
+    w: 2
+    h: 2
+    qoffset: -0.40
+
+  # Более мягкое улучшение качества вокруг основной области.
+  - col: 3
+    row: 1
+    w: 1
+    h: 3
+    qoffset: -0.15
+  - col: 6
+    row: 1
+    w: 1
+    h: 3
+    qoffset: -0.15
+
+target-bitrate: 500k
+tolerance: 0.07
+
+roi-rate-control: abr
+roi-two-pass: false
+
+encoder: auto
+preset: veryfast
+nvenc-preset: p4
+
+bitrate-window: 2
+overlay-bitrate: true
+metrics: false
+serve: false

@@ -1,0 +1,24 @@
+input: examples/ball.mp4
+out: out/qp_map_ball
+
+mode: static
+roi: 0.35,0.25,0.30,0.40
+
+target-bitrate: 500k
+tolerance: 0.07
+
+roi-control: qp-map
+roi-qoffset: -0.30
+roi-middle-qoffset: -0.10
+
+roi-rate-control: abr
+roi-two-pass: false
+
+encoder: auto
+preset: veryfast
+nvenc-preset: p4
+
+bitrate-window: 2
+overlay-bitrate: true
+metrics: false
+serve: false
