@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"strings"
+
+	"github.com/Manabreaker/ROI_based_video_encoding/internal/roi"
 )
 
 const defaultROIBlockSize = 64
@@ -26,7 +28,7 @@ func ParseArgs(args []string, output io.Writer) (Options, error) {
 	noOpen := fs.Bool("no-open", false, "do not open the browser automatically")
 	fs.StringVar(&opts.OutDir, "out", opts.OutDir, "default encoder output directory written to YAML")
 	fs.StringVar(&opts.TargetBitrate, "target-bitrate", opts.TargetBitrate, "default target bitrate written to YAML")
-	fs.StringVar(&opts.Encoder, "encoder", opts.Encoder, "default encoder written to YAML: auto, libx264, or h264_nvenc")
+	fs.StringVar(&opts.Encoder, "encoder", opts.Encoder, "default encoder written to YAML: "+roi.SupportedVideoEncoderList())
 	fs.Float64Var(&opts.BitrateWindow, "bitrate-window", opts.BitrateWindow, "default bitrate overlay window written to YAML")
 	fs.IntVar(&opts.ROIBlockSize, "roi-block-size", opts.ROIBlockSize, "QP-map block size in pixels")
 	fs.StringVar(&opts.Preset, "preset", opts.Preset, "x264 preset written to YAML")
@@ -94,12 +96,10 @@ func ValidateOptions(opts Options) error {
 }
 
 func validateEncoder(value string) error {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "auto", "libx264", "h264_nvenc":
+	if roi.IsSupportedVideoEncoder(value) {
 		return nil
-	default:
-		return errors.New("--encoder must be auto, libx264, or h264_nvenc")
 	}
+	return fmt.Errorf("--encoder must be %s", roi.SupportedVideoEncoderList())
 }
 
 func validateBlockSize(value int) error {

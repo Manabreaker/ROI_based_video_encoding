@@ -97,10 +97,8 @@ func validateConfig(cfg Config) error {
 	if cfg.ROIBufsizeSeconds <= 0 || cfg.ROIBufsizeSeconds > 30 {
 		return errors.New("--roi-bufsize-seconds must be in range (0,30]")
 	}
-	switch normalizeVideoEncoder(cfg.VideoEncoder) {
-	case "auto", "libx264", "h264_nvenc":
-	default:
-		return errors.New("--encoder must be auto, libx264, or h264_nvenc")
+	if !isSupportedVideoEncoder(normalizeVideoEncoder(cfg.VideoEncoder)) {
+		return fmt.Errorf("--encoder must be %s", supportedVideoEncoderList())
 	}
 	if strings.TrimSpace(cfg.NVENCPreset) == "" {
 		return errors.New("--nvenc-preset must not be empty")

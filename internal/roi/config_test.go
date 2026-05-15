@@ -62,6 +62,16 @@ func TestValidateConfigRejectsBadEncoder(t *testing.T) {
 	}
 }
 
+func TestValidateConfigAcceptsHardwareEncoders(t *testing.T) {
+	for _, encoder := range []string{"h264_nvenc", "h264_amf", "h264_videotoolbox"} {
+		cfg := validTestConfig()
+		cfg.VideoEncoder = encoder
+		if err := validateConfig(cfg); err != nil {
+			t.Fatalf("validateConfig rejected %s: %v", encoder, err)
+		}
+	}
+}
+
 func TestValidateConfigRejectsBadMiddleSettings(t *testing.T) {
 	cfg := validTestConfig()
 	cfg.MiddleScale = 1.5

@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Manabreaker/ROI_based_video_streaming/internal/roi"
+	"github.com/Manabreaker/ROI_based_video_encoding/internal/roi"
 	"gopkg.in/yaml.v3"
 )
 

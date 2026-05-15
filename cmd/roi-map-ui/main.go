@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Manabreaker/ROI_based_video_streaming/internal/mapui"
+	"github.com/Manabreaker/ROI_based_video_encoding/internal/mapui"
 )
 
 func main() {

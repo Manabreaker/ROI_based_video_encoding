@@ -1,7 +1,6 @@
 package roi
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -11,18 +10,40 @@ import (
 	"strings"
 )
 
-// resolveVideoEncoder picks NVENC in auto mode when FFmpeg advertises h264_nvenc.
+const (
+	encoderAuto             = "auto"
+	encoderX264             = "libx264"
+	encoderNVENC            = "h264_nvenc"
+	encoderAMF              = "h264_amf"
+	encoderVideoToolbox     = "h264_videotoolbox"
+	videoToolboxQualityKbps = "8000k"
+)
+
+var supportedVideoEncoders = []string{
+	encoderAuto,
+	encoderX264,
+	encoderNVENC,
+	encoderAMF,
+	encoderVideoToolbox,
+}
+
+// resolveVideoEncoder picks a hardware encoder in auto mode when FFmpeg advertises one.
 func resolveVideoEncoder(requested string) (string, error) {
 	encoder := normalizeVideoEncoder(requested)
-	if encoder == "" || encoder == "auto" {
-		if ffmpegHasEncoder("h264_nvenc") {
-			return "h264_nvenc", nil
+	if encoder == "" || encoder == encoderAuto {
+		for _, candidate := range autoVideoEncoderCandidates() {
+			if ffmpegHasEncoder(candidate) {
+				return candidate, nil
+			}
 		}
-		return "libx264", nil
+		return encoderX264, nil
 	}
 
-	if encoder == "h264_nvenc" && !ffmpegHasEncoder("h264_nvenc") {
-		return "", errors.New("--encoder h264_nvenc was requested, but ffmpeg does not list h264_nvenc")
+	if !isSupportedVideoEncoder(encoder) {
+		return "", fmt.Errorf("--encoder must be %s", supportedVideoEncoderList())
+	}
+	if isHardwareVideoEncoderName(encoder) && !ffmpegHasEncoder(encoder) {
+		return "", fmt.Errorf("--encoder %s was requested, but ffmpeg does not list %s", encoder, encoder)
 	}
 
 	return encoder, nil
@@ -54,32 +75,93 @@ func encoderListed(ffmpegEncoders string, name string) bool {
 	return false
 }
 
+func autoVideoEncoderCandidates() []string {
+	if runtime.GOOS == "darwin" {
+		return []string{encoderVideoToolbox, encoderNVENC, encoderAMF}
+	}
+	return []string{encoderNVENC, encoderAMF, encoderVideoToolbox}
+}
+
+func isSupportedVideoEncoder(value string) bool {
+	for _, encoder := range supportedVideoEncoders {
+		if value == encoder {
+			return true
+		}
+	}
+	return false
+}
+
+func IsSupportedVideoEncoder(value string) bool {
+	return isSupportedVideoEncoder(normalizeVideoEncoder(value))
+}
+
+func supportedVideoEncoderList() string {
+	return strings.Join(supportedVideoEncoders, ", ")
+}
+
+func SupportedVideoEncoderList() string {
+	return supportedVideoEncoderList()
+}
+
 // qualityEncoderArgs returns encoder-specific arguments for fixed-quality renders.
 func qualityEncoderArgs(cfg Config, quality int) []string {
-	if isNVENC(cfg) {
+	qualityArg := strconv.Itoa(quality)
+
+	switch normalizeVideoEncoder(cfg.VideoEncoder) {
+	case encoderNVENC:
 		return []string{
-			"-c:v", "h264_nvenc",
+			"-c:v", encoderNVENC,
 			"-preset", cfg.NVENCPreset,
 			"-rc", "vbr",
-			"-cq", strconv.Itoa(quality),
+			"-cq", qualityArg,
 			"-b:v", "0",
 		}
+	case encoderAMF:
+		return []string{
+			"-c:v", encoderAMF,
+			"-usage", "transcoding",
+			"-quality", "balanced",
+			"-rc", "cqp",
+			"-qp_i", qualityArg,
+			"-qp_p", qualityArg,
+			"-qp_b", qualityArg,
+		}
+	case encoderVideoToolbox:
+		return videoToolboxQualityEncoderArgs(quality)
 	}
 
 	return []string{
-		"-c:v", "libx264",
+		"-c:v", encoderX264,
 		"-preset", cfg.Preset,
-		"-crf", strconv.Itoa(quality),
+		"-crf", qualityArg,
 	}
 }
 
 // bitrateEncoderArgs returns encoder-specific arguments for target-bitrate renders.
 func bitrateEncoderArgs(cfg Config, bitrate string, maxrate string, bufsize string) []string {
-	if isNVENC(cfg) {
+	switch normalizeVideoEncoder(cfg.VideoEncoder) {
+	case encoderNVENC:
 		return []string{
-			"-c:v", "h264_nvenc",
+			"-c:v", encoderNVENC,
 			"-preset", cfg.NVENCPreset,
 			"-rc", "vbr",
+			"-b:v", bitrate,
+			"-maxrate", maxrate,
+			"-bufsize", bufsize,
+		}
+	case encoderAMF:
+		return []string{
+			"-c:v", encoderAMF,
+			"-usage", "transcoding",
+			"-quality", "balanced",
+			"-rc", "vbr_peak",
+			"-b:v", bitrate,
+			"-maxrate", maxrate,
+			"-bufsize", bufsize,
+		}
+	case encoderVideoToolbox:
+		return []string{
+			"-c:v", encoderVideoToolbox,
 			"-b:v", bitrate,
 			"-maxrate", maxrate,
 			"-bufsize", bufsize,
@@ -87,7 +169,7 @@ func bitrateEncoderArgs(cfg Config, bitrate string, maxrate string, bufsize stri
 	}
 
 	return []string{
-		"-c:v", "libx264",
+		"-c:v", encoderX264,
 		"-preset", cfg.Preset,
 		"-b:v", bitrate,
 		"-maxrate", maxrate,
@@ -106,18 +188,53 @@ func qpMapBitrateEncoderArgs(cfg Config, bitrate string, maxrate string, bufsize
 }
 
 func appendROIEncoderArgs(cfg Config, args []string) []string {
-	if isNVENC(cfg) {
+	switch normalizeVideoEncoder(cfg.VideoEncoder) {
+	case encoderNVENC:
 		return append(args, "-spatial-aq", "1")
+	case encoderX264:
+		return append(args, "-aq-mode", "1")
 	}
-	return append(args, "-aq-mode", "1")
+	return args
+}
+
+func videoToolboxQualityEncoderArgs(quality int) []string {
+	args := []string{"-c:v", encoderVideoToolbox}
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return append(args, "-q:v", strconv.Itoa(videoToolboxQualityValue(quality)))
+	}
+	return append(args, "-b:v", videoToolboxQualityKbps)
+}
+
+func videoToolboxQualityValue(quality int) int {
+	value := 100 - quality
+	if value < 1 {
+		return 1
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 // isNVENC reports whether the resolved encoder uses NVIDIA's hardware encoder.
 func isNVENC(cfg Config) bool {
-	return normalizeVideoEncoder(cfg.VideoEncoder) == "h264_nvenc"
+	return normalizeVideoEncoder(cfg.VideoEncoder) == encoderNVENC
 }
 
-// roiRateArgs derives bitrate, maxrate, and bufsize arguments for x264 ABR.
+func isHardwareVideoEncoder(cfg Config) bool {
+	return isHardwareVideoEncoderName(normalizeVideoEncoder(cfg.VideoEncoder))
+}
+
+func isHardwareVideoEncoderName(encoder string) bool {
+	switch encoder {
+	case encoderNVENC, encoderAMF, encoderVideoToolbox:
+		return true
+	default:
+		return false
+	}
+}
+
+// roiRateArgs derives bitrate, maxrate, and bufsize arguments for ABR encoding.
 func roiRateArgs(cfg Config, targetKbps float64) (string, string, string) {
 	maxrateKbps := targetKbps * cfg.ROIMaxrateMultiplier
 	if maxrateKbps < targetKbps {

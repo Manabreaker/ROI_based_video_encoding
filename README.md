@@ -178,7 +178,7 @@ http://localhost:8080/comparison_baseline_vs_roi.mp4
 --target-bitrate 1000k
 ```
 
-В ABR-режиме ROI output кодируется около заданного битрейта. Для `libx264` используется two-pass, если включен `--roi-two-pass=true`; для `h264_nvenc` используется single-pass ABR.
+В ABR-режиме ROI output кодируется около заданного битрейта. Для `libx264` используется two-pass, если включен `--roi-two-pass=true`; аппаратные энкодеры (`h264_nvenc`, `h264_amf`, `h264_videotoolbox`) используют single-pass ABR.
 
 Fixed-quality режим:
 
@@ -228,7 +228,7 @@ Fixed-quality режим:
 | `--middle-blur`        | `1`          | blur для middle-zone                                           |
 | `--periphery-scale`    | `0.35`       | scale периферии при `--fit-roi=false`                          |
 | `--blur`               | `2`          | blur периферии при `--fit-roi=false`                           |
-| `--encoder`            | `auto`       | `auto`, `libx264` или `h264_nvenc`                             |
+| `--encoder`            | `auto`       | `auto`, `libx264`, `h264_nvenc`, `h264_amf` или `h264_videotoolbox` |
 | `--overlay-bitrate`    | `true`       | рисовать текущий bitrate на comparison-видео                   |
 | `--bitrate-window`     | `1.0`        | размер окна bitrate в секундах                                 |
 | `--metrics`            | `true`       | считать ROI PSNR report                                        |
@@ -252,15 +252,24 @@ Fixed-quality режим:
 Поведение:
 
 - `auto` проверяет `ffmpeg -hide_banner -encoders`;
-- если `h264_nvenc` найден, используется NVIDIA NVENC;
-- если NVENC недоступен, используется `libx264`;
+- на macOS при наличии `h264_videotoolbox` используется VideoToolbox;
+- иначе при наличии `h264_nvenc` используется NVIDIA NVENC;
+- иначе при наличии `h264_amf` используется AMD AMF;
+- если аппаратный H.264 энкодер недоступен, используется `libx264`;
 - `--encoder libx264` принудительно включает CPU encoding;
-- `--encoder h264_nvenc` завершится ошибкой, если FFmpeg не поддерживает этот энкодер.
+- `--encoder h264_nvenc`, `--encoder h264_amf` и `--encoder h264_videotoolbox` завершатся ошибкой, если FFmpeg не поддерживает выбранный энкодер.
 
 NVENC preset задается так:
 
 ```bash
 --nvenc-preset p4
+```
+
+Примеры явного выбора аппаратного backend:
+
+```bash
+--encoder h264_amf
+--encoder h264_videotoolbox
 ```
 
 ## Docker
@@ -327,15 +336,15 @@ git lfs install
 git lfs pull
 ```
 
-### NVENC не выбирается
+### Аппаратный энкодер не выбирается
 
 Проверьте, что FFmpeg видит энкодер:
 
 ```bash
-ffmpeg -hide_banner -encoders | grep h264_nvenc
+ffmpeg -hide_banner -encoders | grep -E 'h264_(nvenc|amf|videotoolbox)'
 ```
 
-Если энкодера нет, используйте CPU:
+Если нужного энкодера нет, используйте CPU:
 
 ```bash
 --encoder libx264

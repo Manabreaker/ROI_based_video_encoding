@@ -52,8 +52,8 @@ func Run(cfg Config) error {
 	fmt.Printf("      input: %dx%d, duration %.2fs, fps %.2f\n", info.Width, info.Height, info.Duration, info.FPS)
 	fmt.Printf("      target actual bitrate: %.1f kbps\n", targetKbps)
 	fmt.Printf("      encoder: %s\n", cfg.VideoEncoder)
-	if isNVENC(cfg) && cfg.ROITwoPass {
-		fmt.Println("      note: x264 two-pass fitting is disabled for h264_nvenc; using NVENC single-pass ABR")
+	if isHardwareVideoEncoder(cfg) && cfg.ROITwoPass {
+		fmt.Printf("      note: x264 two-pass fitting is disabled for %s; using hardware single-pass ABR\n", cfg.VideoEncoder)
 	}
 
 	tmpDir := filepath.Join(cfg.OutDir, "_tmp")
@@ -241,12 +241,12 @@ func Run(cfg Config) error {
 			notes = append(notes,
 				"ROI output uses FFmpeg addroi side data to request per-block encoder-level QP offsets.",
 				"Block QP-map mode derives the report ROI from the bounding box of configured block cells, while each block keeps its own qoffset.",
-				"QP-map support is encoder-dependent; libx264 requires adaptive quantization and NVENC uses spatial AQ.",
+				"QP-map support is encoder-dependent; libx264 enables adaptive quantization, NVENC enables spatial AQ, and other hardware backends may ignore ROI side data.",
 			)
 		} else {
 			notes = append(notes,
 				"ROI output uses FFmpeg addroi side data to request encoder-level QP offsets for the selected ROI and middle ring.",
-				"QP-map support is encoder-dependent; libx264 requires adaptive quantization and NVENC uses spatial AQ.",
+				"QP-map support is encoder-dependent; libx264 enables adaptive quantization, NVENC enables spatial AQ, and other hardware backends may ignore ROI side data.",
 			)
 		}
 	} else {

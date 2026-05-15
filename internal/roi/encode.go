@@ -272,10 +272,13 @@ func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps floa
 	if blockCount > 0 {
 		note += fmt.Sprintf("; block map uses %d configured cells at %d px grid and overrides roi-qoffset/middle-qoffset rectangles", blockCount, blockSize)
 	}
-	if isNVENC(cfg) {
+	switch normalizeVideoEncoder(cfg.VideoEncoder) {
+	case encoderNVENC:
 		note += "; spatial AQ is enabled for NVENC ROI handling"
-	} else {
+	case encoderX264:
 		note += "; x264 AQ is enabled because libx264 requires adaptive quantization for ROI side data"
+	default:
+		note += fmt.Sprintf("; %s hardware encoding is enabled, but ROI side-data handling is encoder-dependent", cfg.VideoEncoder)
 	}
 	if !withinTolerance(actual, targetKbps, cfg.Tolerance) {
 		note += "; measured bitrate is outside tolerance"
@@ -544,7 +547,7 @@ func renderROIQPMapCandidateABR(cfg Config, info VideoInfo, roi ROI, output stri
 		baseArgs = append(baseArgs, "-g", strconv.Itoa(gop))
 	}
 
-	if !cfg.ROITwoPass || isNVENC(cfg) {
+	if !cfg.ROITwoPass || isHardwareVideoEncoder(cfg) {
 		args := append([]string{}, baseArgs...)
 		args = append(args, "-movflags", "+faststart", output)
 		return runCommand("ffmpeg", args...)
@@ -618,7 +621,7 @@ func renderROICandidateABR(cfg Config, info VideoInfo, roi ROI, output string, s
 		baseArgs = append(baseArgs, "-g", strconv.Itoa(gop))
 	}
 
-	if !cfg.ROITwoPass || isNVENC(cfg) {
+	if !cfg.ROITwoPass || isHardwareVideoEncoder(cfg) {
 		args := append([]string{}, baseArgs...)
 		args = append(args, "-movflags", "+faststart", output)
 		return runCommand("ffmpeg", args...)

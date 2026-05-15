@@ -47,3 +47,17 @@ func TestValidateOptionsRejectsNonLocalAddress(t *testing.T) {
 		t.Fatal("ValidateOptions returned nil error for non-local addr")
 	}
 }
+
+func TestValidateOptionsAcceptsHardwareEncoders(t *testing.T) {
+	video := filepath.Join(t.TempDir(), "video.mp4")
+	writeTestFile(t, video)
+
+	for _, encoder := range []string{"h264_nvenc", "h264_amf", "h264_videotoolbox"} {
+		opts := DefaultOptions()
+		opts.Input = video
+		opts.Encoder = encoder
+		if err := ValidateOptions(opts); err != nil {
+			t.Fatalf("ValidateOptions rejected %s: %v", encoder, err)
+		}
+	}
+}

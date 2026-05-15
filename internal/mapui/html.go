@@ -208,6 +208,8 @@ const indexHTML = `<!doctype html>
           <option value="auto">auto</option>
           <option value="libx264">libx264</option>
           <option value="h264_nvenc">h264_nvenc</option>
+          <option value="h264_amf">h264_amf</option>
+          <option value="h264_videotoolbox">h264_videotoolbox</option>
         </select>
       </div>
     </div>

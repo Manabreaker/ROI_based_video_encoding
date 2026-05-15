@@ -1,6 +1,6 @@
 package mapui
 
-import "github.com/Manabreaker/ROI_based_video_streaming/internal/roi"
+import "github.com/Manabreaker/ROI_based_video_encoding/internal/roi"
 
 // Options contains the local UI server configuration.
 type Options struct {

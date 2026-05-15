@@ -139,7 +139,7 @@ func registerConfigFlags(fs *flag.FlagSet, cfg *Config, configPath *string) {
 	fs.Float64Var(&cfg.ROIMaxrateMultiplier, "roi-maxrate-multiplier", cfg.ROIMaxrateMultiplier, "ABR maxrate as a multiplier of --target-bitrate for ROI output")
 	fs.Float64Var(&cfg.ROIBufsizeSeconds, "roi-bufsize-seconds", cfg.ROIBufsizeSeconds, "ABR VBV buffer size in target-bitrate seconds for ROI output")
 
-	fs.StringVar(&cfg.VideoEncoder, "encoder", cfg.VideoEncoder, "video encoder: auto, libx264, or h264_nvenc")
+	fs.StringVar(&cfg.VideoEncoder, "encoder", cfg.VideoEncoder, "video encoder: "+supportedVideoEncoderList())
 	fs.StringVar(&cfg.Preset, "preset", cfg.Preset, "x264 preset")
 	fs.StringVar(&cfg.NVENCPreset, "nvenc-preset", cfg.NVENCPreset, "NVENC preset used when --encoder resolves to h264_nvenc")
 	fs.IntVar(&cfg.FitIterations, "fit-iterations", cfg.FitIterations, "maximum interpolation probes for ROI fitting and CRF search iterations for emergency ROI fitting")

@@ -26,7 +26,7 @@ ROI_based_video_encoding - учебный PoC, который демонстри
 - ROI можно задать вручную, блоками или выбрать простой motion-эвристикой;
 - вокруг прямоугольной ROI создается middle ring с более мягким QP offset;
 - старый mask-based режим с downscale/upscale и blur периферии доступен через `--roi-control mask`;
-- результат кодируется в H.264 через `libx264` или `h264_nvenc`;
+- результат кодируется в H.264 через `libx264`, `h264_nvenc`, `h264_amf` или `h264_videotoolbox`;
 - сравнение сохраняется как side-by-side видео с bitrate overlay;
 - отчеты пишутся в JSON.
 
@@ -102,7 +102,7 @@ flowchart TD
 
 Когда `--fit-roi=true`, PoC подбирает деградацию периферии через interpolation search по упорядоченной лестнице `scale/blur`. Вместо полного линейного перебора он измеряет опорные кандидаты, интерполирует следующий индекс по target bitrate и добирает соседние уровни около найденного попадания. Подбор может учитывать ROI PSNR, чтобы не выбирать вариант с худшим качеством важной области при близком bitrate.
 
-Для `libx264` ABR может использовать two-pass. Для `h264_nvenc` используется single-pass ABR.
+Для `libx264` ABR может использовать two-pass. Для аппаратных H.264 backend'ов используется single-pass ABR.
 
 ## Конфигурация
 
@@ -146,7 +146,7 @@ internal/roi/config.go     validation
 internal/roi/roi.go        static, motion and block ROI selection
 internal/roi/qp_blocks.go  64px QP-map block parsing and geometry
 internal/roi/encode.go     ROI filter graph, candidates and fitting
-internal/roi/encoder.go    libx264/NVENC selection and args
+internal/roi/encoder.go    H.264 encoder selection and args
 internal/roi/bitrate.go    bitrate windows from ffprobe packets
 internal/roi/render.go     preview and comparison rendering
 internal/roi/metrics.go    ROI PSNR metrics
