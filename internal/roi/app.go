@@ -66,12 +66,16 @@ func Run(cfg Config) error {
 
 	fmt.Println("[2/7] Selecting ROI...")
 
-	roi, err := selectROI(cfg, info, tmpDir)
+	roiSelection, err := selectROISelection(cfg, info, tmpDir)
 	if err != nil {
 		return err
 	}
+	roi := roiSelection.ROI
 
 	fmt.Printf("      ROI %s: x=%d y=%d w=%d h=%d\n", roi.Source, roi.X, roi.Y, roi.W, roi.H)
+	if len(roiSelection.Timeline) > 1 {
+		fmt.Printf("      ROI tracking: %d time segments\n", len(roiSelection.Timeline))
+	}
 	if usesROIBlockMap(cfg) {
 		fmt.Printf("      QP block map: %d blocks, %d px grid\n", countROIBlockCells(cfg.ROIBlocks), normalizedROIBlockSize(cfg))
 	}
@@ -100,7 +104,7 @@ func Run(cfg Config) error {
 		fmt.Println("[4/7] Rendering ROI fitted by changing periphery quality...")
 	}
 
-	roiDecision, err := fitROIToTarget(cfg, info, roi, targetKbps, roiVideo, filepath.Join(tmpDir, "roi_fit"))
+	roiDecision, err := fitROIToTarget(cfg, info, roiSelection, targetKbps, roiVideo, filepath.Join(tmpDir, "roi_fit"))
 	if err != nil {
 		return err
 	}
@@ -198,13 +202,13 @@ func Run(cfg Config) error {
 		baselineSamples,
 		roiSamples,
 		info,
-		roi,
+		roiSelection,
 		baselineDecision,
 		roiDecision,
 	); err != nil {
 		return err
 	}
-	if err := renderPreview(cfg, info, roi, preview); err != nil {
+	if err := renderPreviewForSelection(cfg, info, roiSelection, preview); err != nil {
 		return err
 	}
 
@@ -236,6 +240,12 @@ func Run(cfg Config) error {
 		"The intended comparison is subjective quality near the ROI against a lower measured bitrate and smaller generated ROI file.",
 		"Zone boxes plus text overlays are drawn only on the final comparison video and do not affect measured input/ROI bitrates.",
 	}
+	if len(roiSelection.Timeline) > 1 {
+		notes = append(notes,
+			"CV mode uses a sampled ROI timeline: each time segment is encoded and drawn with the tracked ROI for that segment.",
+			"The report ROI is the union of tracked ROIs and is used for summary metrics.",
+		)
+	}
 	if roiDecision.ROIControl == "qp-map" {
 		if roiDecision.ROIBlockCount > 0 {
 			notes = append(notes,
@@ -264,6 +274,7 @@ func Run(cfg Config) error {
 		TargetKbps:    targetKbps,
 		Video:         info,
 		ROI:           roi,
+		ROITimeline:   roiSelection.Timeline,
 		Decisions:     []EncodeDecision{baselineDecision, roiDecision},
 		Notes:         notes,
 	}

@@ -127,6 +127,67 @@ func TestBuildROIQPMapFilterUsesBlockMap(t *testing.T) {
 	}
 }
 
+func TestBuildROIQPMapFilterUsesMovingTimelineSegments(t *testing.T) {
+	filter, err := buildROIQPMapFilterForSelection(
+		Config{
+			ROIControl:       "qp-map",
+			ROIQOffset:       -0.30,
+			ROIMiddleQOffset: 0,
+		},
+		VideoInfo{Width: 320, Height: 180},
+		ROISelection{
+			ROI: ROI{X: 10, Y: 20, W: 60, H: 40},
+			Timeline: []TimedROI{
+				{StartSeconds: 0, EndSeconds: 1.5, ROI: ROI{X: 10, Y: 20, W: 60, H: 40}},
+				{StartSeconds: 1.5, EndSeconds: 3.0, ROI: ROI{X: 120, Y: 30, W: 60, H: 40}},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, part := range []string{
+		"trim=start=0.000:end=1.500",
+		"trim=start=1.500:end=3.000",
+		"addroi=x=10:y=20:w=60:h=40:qoffset=-0.3000:clear=1",
+		"addroi=x=120:y=30:w=60:h=40:qoffset=-0.3000:clear=1",
+		"concat=n=2:v=1:a=0",
+	} {
+		if !strings.Contains(filter, part) {
+			t.Fatalf("moving QP-map filter does not contain %q:\n%s", part, filter)
+		}
+	}
+}
+
+func TestBuildROIFilterUsesMovingTimelineSegments(t *testing.T) {
+	filter := buildROIFilterForSelection(
+		Config{MiddleMargin: 0.25, MiddleScale: 0.67, MiddleBlurRadius: 1},
+		VideoInfo{Width: 320, Height: 180},
+		ROISelection{
+			ROI: ROI{X: 10, Y: 20, W: 60, H: 40},
+			Timeline: []TimedROI{
+				{StartSeconds: 0, EndSeconds: 1.5, ROI: ROI{X: 10, Y: 20, W: 60, H: 40}},
+				{StartSeconds: 1.5, EndSeconds: 3.0, ROI: ROI{X: 120, Y: 30, W: 60, H: 40}},
+			},
+		},
+		0.35,
+		4,
+	)
+
+	for _, part := range []string{
+		"trim=start=0.000:end=1.500",
+		"trim=start=1.500:end=3.000",
+		"crop=60:40:10:20",
+		"crop=60:40:120:30",
+		"concat=n=2:v=1:a=0",
+	} {
+		if !strings.Contains(filter, part) {
+			t.Fatalf("moving mask filter does not contain %q:\n%s", part, filter)
+		}
+	}
+}
+
 func TestSelectROIUsesBlockMapBoundingBox(t *testing.T) {
 	cfg := Config{
 		Mode:         "blocks",

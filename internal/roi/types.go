@@ -54,6 +54,12 @@ type Config struct {
 	MotionThresh int     `yaml:"motion-threshold"`
 	ROIMargin    float64 `yaml:"roi-margin"`
 
+	// Model-based CV ROI detection.
+	CVModel       string  `yaml:"cv-model"`
+	CVMinScore    float64 `yaml:"cv-min-score"`
+	CVSampleCount int     `yaml:"cv-samples"`
+	CVFrameWidth  int     `yaml:"cv-frame-width"`
+
 	// Dynamic bitrate overlay.
 	OverlayBitrate     bool    `yaml:"overlay-bitrate"`
 	BitrateWindow      float64 `yaml:"bitrate-window"`
@@ -82,6 +88,19 @@ type ROI struct {
 	W      int    `json:"w"`
 	H      int    `json:"h"`
 	Source string `json:"source"`
+}
+
+// TimedROI describes one time segment where the ROI should be applied.
+type TimedROI struct {
+	StartSeconds float64 `json:"start_seconds"`
+	EndSeconds   float64 `json:"end_seconds"`
+	ROI          ROI     `json:"roi"`
+}
+
+// ROISelection carries both the summary ROI and an optional moving ROI timeline.
+type ROISelection struct {
+	ROI      ROI
+	Timeline []TimedROI
 }
 
 // Artifact describes a generated or referenced output file in the report.
@@ -209,6 +228,7 @@ type Report struct {
 	TargetKbps    float64          `json:"target_kbps"`
 	Video         VideoInfo        `json:"video"`
 	ROI           ROI              `json:"roi"`
+	ROITimeline   []TimedROI       `json:"roi_timeline,omitempty"`
 	ROIBlockSize  int              `json:"roi_block_size,omitempty"`
 	ROIBlocks     []QPMapBlock     `json:"roi_blocks,omitempty"`
 	Decisions     []EncodeDecision `json:"decisions"`

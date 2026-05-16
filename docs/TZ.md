@@ -65,7 +65,7 @@ Streaming, WebRTC, DASH, RTSP и клиентская доставка не вх
 | **Блок**               | **Назначение**                                                                                         |
 |------------------------|--------------------------------------------------------------------------------------------------------|
 | **1. Input**           | Получение видео из файла. Камера/RTSP не являются обязательными требованиями.                          |
-| **2. ROI generator**   | Выделение ROI: static box, motion detection, ручная блочная QP-map; object detection как расширение.   |
+| **2. ROI generator**   | Выделение ROI: static box, motion detection, sampled CV face tracking, ручная блочная QP-map.          |
 | **3. Quality mapper**  | Преобразование ROI в QP offsets по областям/блокам или в mask-based preprocessing.                     |
 | **4. Encoder**         | Кодирование ROI-варианта через FFmpeg: CPU `libx264` или аппаратные H.264 backend'ы.                   |
 | **5. Output**          | Сохранение выходного видеофайла, preview, side-by-side comparison и JSON/YAML отчетов.                 |
@@ -112,9 +112,9 @@ Streaming, WebRTC, DASH, RTSP и клиентская доставка не вх
 
 | **Слой**                    | **Выбор**                                                                            | **Обоснование**                                                                               |
 |-----------------------------|--------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
-| **ROI detection/selection** | Static bbox, motion detection, ручная блочная QP-map; object detector как расширение | Лёгкий старт, воспроизводимость и хорошая демонстрируемость.                                  |
+| **ROI detection/selection** | Static bbox, motion detection, Pigo facefinder sampled tracking, ручная блочная QP-map | Лёгкий старт, воспроизводимость и хорошая демонстрируемость.                                  |
 | **Quality mapping**         | FFmpeg `addroi` QP offsets; mask-based preprocessing как fallback                    | Позволяет сравнить encoder-level ROI и визуально понятный preprocessing.                      |
-| **Encoding primary**        | FFmpeg + H.264 (`libx264`, `h264_nvenc`, `h264_amf`, `h264_videotoolbox`)             | Доступно локально, хорошо подходит для учебного PoC и сравнения результатов.                  |
+| **Encoding primary**        | FFmpeg + H.264 (`libx264`, `h264_nvenc`, `h264_amf`, `h264_videotoolbox`)            | Доступно локально, хорошо подходит для учебного PoC и сравнения результатов.                  |
 | **Metrics**                 | FFmpeg/ffprobe; PSNR/SSIM/VMAF и ROI-mask metrics при наличии поддержки              | Метрики позволяют оценить не только общий файл, но и качество важной области.                 |
 | **UI**                      | Минимальный локальный browser UI на Go HTTP server                                   | Кроссплатформенно и просто: сервер отдает страницу, принимает карту блоков и генерирует YAML. |
 | **Runtime**                 | Go CLI + FFmpeg + YAML config                                                        | Достаточно для автономного запуска и повторяемости экспериментов.                             |

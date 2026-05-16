@@ -18,9 +18,9 @@ func validateConfig(cfg Config) error {
 		return errors.New("--tolerance must be in range (0, 0.5]")
 	}
 	switch roiMode(cfg) {
-	case "static", "motion", "blocks":
+	case "static", "motion", "cv", "blocks":
 	default:
-		return errors.New("--mode must be static, motion, or blocks")
+		return errors.New("--mode must be static, motion, cv, or blocks")
 	}
 	if cfg.ROIHighQualityCRF < 0 || cfg.ROIHighQualityCRF > 51 {
 		return errors.New("--roi-crf must be in range 0..51")
@@ -82,6 +82,15 @@ func validateConfig(cfg Config) error {
 	}
 	if cfg.ROIMaxBlur < 0 || cfg.ROIMaxBlur > 40 {
 		return errors.New("--roi-max-blur must be in range 0..40")
+	}
+	if cfg.CVMinScore < 0 {
+		return errors.New("--cv-min-score must be greater than or equal to zero")
+	}
+	if cfg.CVSampleCount < 1 || cfg.CVSampleCount > 120 {
+		return errors.New("--cv-samples must be in range 1..120")
+	}
+	if cfg.CVFrameWidth < 0 || cfg.CVFrameWidth > 4096 {
+		return errors.New("--cv-frame-width must be in range 0..4096")
 	}
 	switch roiRateControl(cfg) {
 	case "abr", "crf":

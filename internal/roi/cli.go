@@ -92,6 +92,10 @@ func defaultConfig() Config {
 		MotionWindow:         0.6,
 		MotionThresh:         34,
 		ROIMargin:            0.18,
+		CVModel:              defaultCVModelName,
+		CVMinScore:           5.0,
+		CVSampleCount:        12,
+		CVFrameWidth:         960,
 		OverlayBitrate:       true,
 		BitrateWindow:        1.0,
 		MaxBitrateOverlays:   300,
@@ -107,7 +111,7 @@ func registerConfigFlags(fs *flag.FlagSet, cfg *Config, configPath *string) {
 
 	fs.StringVar(&cfg.Input, "input", cfg.Input, "input video file, camera URL, RTSP URL, or any FFmpeg-readable source")
 	fs.StringVar(&cfg.OutDir, "out", cfg.OutDir, "output directory")
-	fs.StringVar(&cfg.Mode, "mode", cfg.Mode, "ROI mode: static, motion, or blocks")
+	fs.StringVar(&cfg.Mode, "mode", cfg.Mode, "ROI mode: static, motion, cv, or blocks")
 	fs.StringVar(&cfg.ROIString, "roi", cfg.ROIString, "static ROI as x,y,w,h; pixels or fractions 0..1; if empty, center ROI is used")
 	fs.IntVar(&cfg.ROIBlockSize, "roi-block-size", cfg.ROIBlockSize, "QP-map block size in pixels for --mode=blocks")
 	fs.Var(roiBlocksFlag{target: &cfg.ROIBlocks}, "roi-blocks", "QP-map blocks as col,row,qoffset or col,row,w,h,qoffset entries separated by semicolons")
@@ -147,6 +151,10 @@ func registerConfigFlags(fs *flag.FlagSet, cfg *Config, configPath *string) {
 	fs.Float64Var(&cfg.MotionWindow, "motion-window", cfg.MotionWindow, "time gap in seconds between frames used for simple motion ROI detection")
 	fs.IntVar(&cfg.MotionThresh, "motion-threshold", cfg.MotionThresh, "grayscale difference threshold for motion ROI detection")
 	fs.Float64Var(&cfg.ROIMargin, "roi-margin", cfg.ROIMargin, "ROI expansion margin as fraction of detected bbox size")
+	fs.StringVar(&cfg.CVModel, "cv-model", cfg.CVModel, "CV model for --mode=cv: pigo-facefinder or path to a Pigo cascade file")
+	fs.Float64Var(&cfg.CVMinScore, "cv-min-score", cfg.CVMinScore, "minimum Pigo detection score accepted by --mode=cv")
+	fs.IntVar(&cfg.CVSampleCount, "cv-samples", cfg.CVSampleCount, "number of tracking keyframes sampled by --mode=cv")
+	fs.IntVar(&cfg.CVFrameWidth, "cv-frame-width", cfg.CVFrameWidth, "width used for CV detector frames; 0 keeps source width")
 
 	fs.BoolVar(&cfg.OverlayBitrate, "overlay-bitrate", cfg.OverlayBitrate, "draw dynamic bitrate overlay on comparison video")
 	fs.Float64Var(&cfg.BitrateWindow, "bitrate-window", cfg.BitrateWindow, "window size in seconds for dynamic bitrate calculation")

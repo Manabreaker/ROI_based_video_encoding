@@ -23,14 +23,14 @@ ROI_based_video_encoding - учебный PoC, который демонстри
 - входное видео используется как baseline и не перекодируется;
 - ROI output по умолчанию создается через encoder-level ROI side data;
 - поддерживается прямоугольная ROI или блочная QP-map по сетке 64x64;
-- ROI можно задать вручную, блоками или выбрать простой motion-эвристикой;
+- ROI можно задать вручную, блоками, простой motion-эвристикой или встроенной CV-моделью для лиц;
 - вокруг прямоугольной ROI создается middle ring с более мягким QP offset;
 - старый mask-based режим с downscale/upscale и blur периферии доступен через `--roi-control mask`;
 - результат кодируется в H.264 через `libx264`, `h264_nvenc`, `h264_amf` или `h264_videotoolbox`;
 - сравнение сохраняется как side-by-side видео с bitrate overlay;
 - отчеты пишутся в JSON.
 
-Это не production streaming stack: нет доставки потока, realtime tracking и codec-specific QP map API. Но основной PoC теперь использует FFmpeg `addroi` как encoder-level ROI/QP-map подсказку, а результат сохраняется как локальные output-файлы.
+Это не production streaming stack: нет доставки потока, realtime per-frame tracking и codec-specific QP map API. Но основной PoC теперь использует FFmpeg `addroi` как encoder-level ROI/QP-map подсказку, а результат сохраняется как локальные output-файлы.
 
 ## Pipeline
 
@@ -84,17 +84,19 @@ flowchart TD
 
 ## Выбор ROI
 
-Поддерживаются два режима:
+Поддерживаются четыре режима:
 
 - `static` - ROI задается флагом `--roi` или берется из центра кадра;
-- `motion` - ROI строится по разнице яркости между двумя кадрами.
+- `motion` - ROI строится по разнице яркости между двумя кадрами;
+- `cv` - ROI timeline строится по detections предобученной Pigo facefinder cascade-модели;
+- `blocks` - ROI задается ручной блочной QP-map.
 
 `static` принимает координаты `x,y,w,h`:
 
 - в пикселях, например `640,300,520,360`;
 - в долях кадра, например `0.30,0.20,0.40,0.45`.
 
-`motion` режим нужен для демонстрации идеи автоматического выбора ROI. Он не заменяет object detection, saliency detection или tracking.
+`motion` режим нужен для демонстрации идеи автоматического выбора ROI без модели. `cv` режим уже использует модель и двигает ROI по sampled timeline, но текущая встроенная модель ищет лица, а не произвольные объекты.
 
 ## Битрейт и fitting
 
@@ -143,7 +145,8 @@ cmd/roi/main.go            CLI entrypoint
 internal/roi/app.go        orchestration pipeline
 internal/roi/cli.go        CLI flags
 internal/roi/config.go     validation
-internal/roi/roi.go        static, motion and block ROI selection
+internal/roi/roi.go        static, motion, cv and block ROI selection
+internal/roi/cv.go         Pigo facefinder model ROI detector
 internal/roi/qp_blocks.go  64px QP-map block parsing and geometry
 internal/roi/encode.go     ROI filter graph, candidates and fitting
 internal/roi/encoder.go    H.264 encoder selection and args
@@ -166,8 +169,8 @@ Docker нужен не для алгоритма, а для воспроизво
 ## Ограничения
 
 - одна прямоугольная ROI;
-- нет object detection, saliency map или gaze tracking;
-- нет realtime tracking ROI по каждому кадру;
+- нет generic object detection, saliency map или gaze tracking;
+- CV tracking работает по sampled keyframes и временным сегментам, а не как realtime tracker на каждом кадре;
 - нет WebRTC, DASH, RTSP или другого слоя доставки, streaming не входит в обязательный scope проекта;
 - QP-map реализован через FFmpeg `addroi`; фактический эффект зависит от поддержки ROI side data конкретным энкодером;
 - mask fitting кодирует несколько probe-кандидатов, что подходит для PoC, но не для realtime pipeline;
@@ -177,7 +180,7 @@ Docker нужен не для алгоритма, а для воспроизво
 
 После базового encoding pipeline проект можно расширять в нескольких направлениях:
 
-- динамический ROI detector или tracker;
+- более сильный динамический ROI detector или tracker для произвольных объектов;
 - управление качеством на уровне кодировщика: QP map, ROI map, tiles, slices или codec-specific regions;
 - потоковая доставка: WebRTC, DASH, HLS, RTSP или SRT как отдельная будущая надстройка;
 - управление latency и encoder presets;

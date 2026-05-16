@@ -151,6 +151,21 @@ Motion ROI:
 
 Motion-режим извлекает два кадра, считает разницу яркости, строит bounding box изменившихся пикселей и расширяет его через `--roi-margin`. Это простая эвристика, а не CV/ML-детектор.
 
+CV ROI через встроенную модель:
+
+```bash
+./roi-poc \
+  --input input.mp4 \
+  --out out/cv_faces \
+  --mode cv \
+  --cv-model pigo-facefinder \
+  --cv-samples 12 \
+  --cv-min-score 5 \
+  --roi-margin 0.25
+```
+
+`cv`-режим использует предобученную Pigo facefinder cascade-модель. Программа берет серию ключевых кадров, ищет лица и строит ROI timeline: на каждом временном сегменте ROI ставится вокруг выбранного лица, а при нескольких лицах трек держится за detection, ближайший к предыдущей ROI. Если модель ничего не нашла, используется центральная fallback ROI. Для более плавного следования увеличьте `--cv-samples`.
+
 Запуск с локальным HTTP preview:
 
 ```bash
@@ -212,8 +227,12 @@ Fixed-quality режим:
 | `--input`              | -            | входной видеофайл, URL, RTSP или другой FFmpeg-readable source      |
 | `--config`             | -            | YAML config; явно переданные флаги имеют приоритет                  |
 | `--out`                | `out`        | директория для результата                                           |
-| `--mode`               | `static`     | режим ROI: `static`, `motion` или `blocks`                          |
+| `--mode`               | `static`     | режим ROI: `static`, `motion`, `cv` или `blocks`                    |
 | `--roi`                | -            | ROI как `x,y,w,h`, в пикселях или долях кадра                       |
+| `--cv-model`           | `pigo-facefinder` | CV model для `--mode cv`: встроенная Pigo facefinder или path к cascade |
+| `--cv-samples`         | `12`         | сколько tracking keyframes проверить CV-моделью                     |
+| `--cv-min-score`       | `5`          | минимальный score detection для `--mode cv`                         |
+| `--cv-frame-width`     | `960`        | ширина кадров для CV inference; `0` оставляет исходную ширину       |
 | `--roi-block-size`     | `64`         | размер блока для `--mode blocks`                                    |
 | `--roi-blocks`         | -            | QP-map блоки: `col,row,qoffset` или `col,row,w,h,qoffset`           |
 | `--target-bitrate`     | `1000k`      | целевой bitrate для ROI output                                      |

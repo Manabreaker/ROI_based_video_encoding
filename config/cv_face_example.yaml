@@ -1,0 +1,29 @@
+# Use a video with visible human faces for the bundled detector.
+input: examples/dynamic/4934336_Person_People_3840x2160.mp4
+out: out/cv_face_example
+
+mode: cv
+cv-model: pigo-facefinder
+cv-samples: 24 # increase for smoother ROI tracking
+cv-min-score: 5
+cv-frame-width: 960
+roi-margin: 0.25
+
+target-bitrate: 5000k
+tolerance: 0.07
+
+roi-control: qp-map
+roi-qoffset: -0.30
+roi-middle-qoffset: -0.10
+
+roi-rate-control: abr
+roi-two-pass: false
+
+encoder: auto
+preset: veryfast
+nvenc-preset: p4
+
+bitrate-window: 2
+overlay-bitrate: true
+metrics: false
+serve: false

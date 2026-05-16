@@ -255,6 +255,39 @@ func TestComparisonDrawBoxesMirrorsMaskZones(t *testing.T) {
 	}
 }
 
+func TestComparisonDrawBoxesUsesMovingTimelineEnables(t *testing.T) {
+	boxes, err := comparisonDrawBoxesForSelection(
+		Config{
+			ROIControl:       "qp-map",
+			ROIMiddleQOffset: 0,
+			MiddleMargin:     0.25,
+		},
+		VideoInfo{Width: 320, Height: 180},
+		ROISelection{
+			ROI: ROI{X: 10, Y: 20, W: 60, H: 40},
+			Timeline: []TimedROI{
+				{StartSeconds: 0, EndSeconds: 1.5, ROI: ROI{X: 10, Y: 20, W: 60, H: 40}},
+				{StartSeconds: 1.5, EndSeconds: 3.0, ROI: ROI{X: 120, Y: 30, W: 60, H: 40}},
+			},
+		},
+		EncodeDecision{ROIControl: "qp-map"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(boxes, ",")
+
+	for _, part := range []string{
+		"drawbox=x=10:y=20:w=60:h=40:color=lime@0.90:t=4:enable='between(t\\,0.000\\,1.500)'",
+		"drawbox=x=120:y=30:w=60:h=40:color=lime@0.90:t=4:enable='between(t\\,1.500\\,3.000)'",
+		"drawbox=x=330:y=20:w=60:h=40:color=lime@0.90:t=4:enable='between(t\\,0.000\\,1.500)'",
+	} {
+		if !strings.Contains(joined, part) {
+			t.Fatalf("moving comparison boxes do not contain %q:\n%s", part, joined)
+		}
+	}
+}
+
 func TestBuildComparisonFilterScalesWideHardwareH264HStack(t *testing.T) {
 	for _, cfg := range []Config{
 		{VideoEncoder: "h264_nvenc", NVENCPreset: "p4"},

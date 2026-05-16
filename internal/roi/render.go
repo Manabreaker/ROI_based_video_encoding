@@ -17,11 +17,11 @@ func renderComparison(
 	baselineSamples []BitrateSample,
 	roiSamples []BitrateSample,
 	info VideoInfo,
-	roi ROI,
+	selection ROISelection,
 	baselineDecision EncodeDecision,
 	roiDecision EncodeDecision,
 ) error {
-	filter, scaled, err := buildComparisonFilter(cfg, baselineSamples, roiSamples, info, roi, baselineDecision, roiDecision)
+	filter, scaled, err := buildComparisonFilterForSelection(cfg, baselineSamples, roiSamples, info, selection, baselineDecision, roiDecision)
 	if err != nil {
 		return err
 	}
@@ -55,6 +55,26 @@ func buildComparisonFilter(
 	roiSamples []BitrateSample,
 	info VideoInfo,
 	roi ROI,
+	baselineDecision EncodeDecision,
+	roiDecision EncodeDecision,
+) (string, bool, error) {
+	return buildComparisonFilterForSelection(
+		cfg,
+		baselineSamples,
+		roiSamples,
+		info,
+		staticROISelection(roi),
+		baselineDecision,
+		roiDecision,
+	)
+}
+
+func buildComparisonFilterForSelection(
+	cfg Config,
+	baselineSamples []BitrateSample,
+	roiSamples []BitrateSample,
+	info VideoInfo,
+	selection ROISelection,
 	baselineDecision EncodeDecision,
 	roiDecision EncodeDecision,
 ) (string, bool, error) {
@@ -95,7 +115,7 @@ func buildComparisonFilter(
 		prefix = leftChain + ";" + rightChain + ";"
 	}
 
-	boxes, err := comparisonDrawBoxes(cfg, info, roi, roiDecision)
+	boxes, err := comparisonDrawBoxesForSelection(cfg, info, selection, roiDecision)
 	if err != nil {
 		return "", false, err
 	}
@@ -116,6 +136,10 @@ func shouldScaleComparisonForHardwareH264(cfg Config, info VideoInfo) bool {
 }
 
 func comparisonDrawBoxes(cfg Config, info VideoInfo, roi ROI, roiDecision EncodeDecision) ([]string, error) {
+	return comparisonDrawBoxesForSelection(cfg, info, staticROISelection(roi), roiDecision)
+}
+
+func comparisonDrawBoxesForSelection(cfg Config, info VideoInfo, selection ROISelection, roiDecision EncodeDecision) ([]string, error) {
 	if usesROIBlockMap(cfg) {
 		left, err := roiBlockDrawBoxes(cfg, info, 0)
 		if err != nil {
@@ -128,8 +152,19 @@ func comparisonDrawBoxes(cfg Config, info VideoInfo, roi ROI, roiDecision Encode
 		return append(left, right...), nil
 	}
 
-	left := staticZoneDrawBoxes(cfg, info, roi, 0, 5, 5, 4)
-	right := staticZoneDrawBoxes(cfg, info, roi, info.Width, 5, 5, 4)
+	timeline := normalizedROITimeline(selection, info)
+	if len(timeline) > 1 {
+		boxes := make([]string, 0, len(timeline)*6)
+		for _, item := range timeline {
+			enable := timedROIEnable(item)
+			boxes = append(boxes, zoneDrawBoxes(cfg, info, item.ROI, 0, 5, 5, 4, enable)...)
+			boxes = append(boxes, zoneDrawBoxes(cfg, info, item.ROI, info.Width, 5, 5, 4, enable)...)
+		}
+		return boxes, nil
+	}
+
+	left := staticZoneDrawBoxes(cfg, info, selection.ROI, 0, 5, 5, 4)
+	right := staticZoneDrawBoxes(cfg, info, selection.ROI, info.Width, 5, 5, 4)
 	return append(left, right...), nil
 }
 
@@ -182,36 +217,64 @@ func qOffsetColorMatch(got float64, want float64) bool {
 }
 
 func staticZoneDrawBoxes(cfg Config, info VideoInfo, roi ROI, xOffset int, redThickness int, middleThickness int, roiThickness int) []string {
+	return zoneDrawBoxes(cfg, info, roi, xOffset, redThickness, middleThickness, roiThickness, "")
+}
+
+func zoneDrawBoxes(cfg Config, info VideoInfo, roi ROI, xOffset int, redThickness int, middleThickness int, roiThickness int, enableExpr string) []string {
 	boxes := make([]string, 0, 3)
 	if roiControl(cfg) != "qp-map" {
-		boxes = append(boxes, fmt.Sprintf(
-			"drawbox=x=%d:y=0:w=%d:h=%d:color=red@0.90:t=%d",
+		boxes = append(boxes, drawBoxFilter(
 			xOffset,
+			0,
 			info.Width,
 			info.Height,
+			"red@0.90",
 			redThickness,
+			enableExpr,
 		))
 	}
 	if shouldDrawMiddleZone(cfg) {
 		middle := middleROI(cfg, roi, info)
-		boxes = append(boxes, fmt.Sprintf(
-			"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=%d",
+		boxes = append(boxes, drawBoxFilter(
 			xOffset+middle.X,
 			middle.Y,
 			middle.W,
 			middle.H,
+			"orange@0.95",
 			middleThickness,
+			enableExpr,
 		))
 	}
-	boxes = append(boxes, fmt.Sprintf(
-		"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=%d",
+	boxes = append(boxes, drawBoxFilter(
 		xOffset+roi.X,
 		roi.Y,
 		roi.W,
 		roi.H,
+		"lime@0.90",
 		roiThickness,
+		enableExpr,
 	))
 	return boxes
+}
+
+func drawBoxFilter(x int, y int, w int, h int, color string, thickness int, enableExpr string) string {
+	filter := fmt.Sprintf(
+		"drawbox=x=%d:y=%d:w=%d:h=%d:color=%s:t=%d",
+		x,
+		y,
+		w,
+		h,
+		color,
+		thickness,
+	)
+	if enableExpr != "" {
+		filter += ":enable='" + enableExpr + "'"
+	}
+	return filter
+}
+
+func timedROIEnable(item TimedROI) string {
+	return fmt.Sprintf("between(t\\,%.3f\\,%.3f)", item.StartSeconds, item.EndSeconds)
 }
 
 func shouldDrawMiddleZone(cfg Config) bool {
@@ -350,6 +413,10 @@ func escapeDrawText(s string) string {
 
 // renderPreview writes one still frame with the selected ROI box.
 func renderPreview(cfg Config, info VideoInfo, roi ROI, output string) error {
+	return renderPreviewForSelection(cfg, info, staticROISelection(roi), output)
+}
+
+func renderPreviewForSelection(cfg Config, info VideoInfo, selection ROISelection, output string) error {
 	t := 0.0
 	if info.Duration > 0 {
 		t = math.Min(info.Duration*0.25, math.Max(0.0, info.Duration-0.1))
@@ -363,7 +430,7 @@ func renderPreview(cfg Config, info VideoInfo, roi ROI, output string) error {
 		}
 		boxes = append(boxes, blockBoxes...)
 	} else {
-		boxes = append(boxes, staticZoneDrawBoxes(cfg, info, roi, 0, 6, 6, 6)...)
+		boxes = append(boxes, staticZoneDrawBoxes(cfg, info, roiAtTime(selection, t, info), 0, 6, 6, 6)...)
 	}
 	boxes = append(boxes, "format=rgb24")
 

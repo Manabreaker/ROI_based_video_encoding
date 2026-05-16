@@ -11,19 +11,20 @@ import (
 )
 
 // fitROIToTarget tries periphery settings and writes the ROI output that best matches the target.
-func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, output string, workDir string) (EncodeDecision, error) {
+func fitROIToTarget(cfg Config, info VideoInfo, selection ROISelection, targetKbps float64, output string, workDir string) (EncodeDecision, error) {
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return EncodeDecision{}, err
 	}
 
+	roi := selection.ROI
 	rateControl := roiRateControl(cfg)
 	if roiControl(cfg) == "qp-map" {
-		return renderROIQPMapToTarget(cfg, info, roi, targetKbps, output, workDir, rateControl)
+		return renderROIQPMapToTarget(cfg, info, selection, targetKbps, output, workDir, rateControl)
 	}
 
 	if !cfg.FitROI {
 		path := filepath.Join(workDir, fmt.Sprintf("roi_manual_%s.mp4", rateControl))
-		if err := renderROICandidate(cfg, info, roi, path, cfg.ROIHighQualityCRF, cfg.ManualPeripheryScale, cfg.ManualBlurRadius, targetKbps); err != nil {
+		if err := renderROICandidate(cfg, info, selection, path, cfg.ROIHighQualityCRF, cfg.ManualPeripheryScale, cfg.ManualBlurRadius, targetKbps); err != nil {
 			return EncodeDecision{}, err
 		}
 
@@ -74,7 +75,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 
 	settings := peripheryCandidates(cfg)
 
-	candidates, err := fitPeripheryCandidatesInterpolated(cfg, info, roi, targetKbps, workDir, settings, rateControl)
+	candidates, err := fitPeripheryCandidatesInterpolated(cfg, info, selection, targetKbps, workDir, settings, rateControl)
 	if err != nil {
 		return EncodeDecision{}, err
 	}
@@ -97,7 +98,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 			for crf := cfg.ROIHighQualityCRF - 1; crf >= cfg.ROIMinCRF; crf-- {
 				path := filepath.Join(workDir, fmt.Sprintf("roi_full_detail_crf_%02d.mp4", crf))
 
-				if err := renderROICandidateCRF(cfg, info, roi, path, crf, 1.0, 0); err != nil {
+				if err := renderROICandidateCRFForSelection(cfg, info, selection, path, crf, 1.0, 0); err != nil {
 					return EncodeDecision{}, err
 				}
 
@@ -129,7 +130,7 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 		if best.Kbps > targetKbps*(1+cfg.Tolerance) && cfg.AllowROIQualityLoss {
 			worst := chooseLowestBitrateCandidate(candidates)
 
-			emergencyCandidates, err := fitROIEmergencyCRF(cfg, info, roi, targetKbps, workDir, worst.Scale, worst.Blur)
+			emergencyCandidates, err := fitROIEmergencyCRF(cfg, info, selection, targetKbps, workDir, worst.Scale, worst.Blur)
 			if err != nil {
 				return EncodeDecision{}, err
 			}
@@ -150,6 +151,9 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 	note := ""
 	if rateControl == "abr" {
 		note = "target-rate ROI encode: periphery is simplified before encoding so the same bitrate budget is spent preferentially inside the ROI"
+		if len(selection.Timeline) > 1 {
+			note += fmt.Sprintf("; moving ROI is applied as %d sampled time segments", len(selection.Timeline))
+		}
 		if best.ROIYPSNR > 0 {
 			note += fmt.Sprintf("; selected the least degraded periphery within %.2f dB of the best ROI PSNR candidate", cfg.ROIPSNRTieDB)
 		}
@@ -187,7 +191,8 @@ func fitROIToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, out
 	}, nil
 }
 
-func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps float64, output string, workDir string, rateControl string) (EncodeDecision, error) {
+func renderROIQPMapToTarget(cfg Config, info VideoInfo, selection ROISelection, targetKbps float64, output string, workDir string, rateControl string) (EncodeDecision, error) {
+	roi := selection.ROI
 	path := filepath.Join(workDir, fmt.Sprintf("roi_qp_map_%s.mp4", rateControl))
 	blockCount := countROIBlockCells(cfg.ROIBlocks)
 	blockSize := 0
@@ -195,7 +200,7 @@ func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps floa
 		blockSize = normalizedROIBlockSize(cfg)
 	}
 
-	if err := renderROIQPMapCandidate(cfg, info, roi, path, cfg.ROIHighQualityCRF, targetKbps); err != nil {
+	if err := renderROIQPMapCandidate(cfg, info, selection, path, cfg.ROIHighQualityCRF, targetKbps); err != nil {
 		return EncodeDecision{}, err
 	}
 
@@ -269,6 +274,9 @@ func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps floa
 	}
 
 	note := "encoder-level ROI QP map via FFmpeg addroi side data; pixels are not preprocessed before encoding"
+	if len(selection.Timeline) > 1 {
+		note += fmt.Sprintf("; moving ROI is applied as %d sampled time segments", len(selection.Timeline))
+	}
 	if blockCount > 0 {
 		note += fmt.Sprintf("; block map uses %d configured cells at %d px grid and overrides roi-qoffset/middle-qoffset rectangles", blockCount, blockSize)
 	}
@@ -307,14 +315,14 @@ func renderROIQPMapToTarget(cfg Config, info VideoInfo, roi ROI, targetKbps floa
 func fitPeripheryCandidatesInterpolated(
 	cfg Config,
 	info VideoInfo,
-	roi ROI,
+	selection ROISelection,
 	targetKbps float64,
 	workDir string,
 	settings []peripherySetting,
 	rateControl string,
 ) ([]Candidate, error) {
 	eval := func(idx int, s peripherySetting) (Candidate, error) {
-		return evaluatePeripheryCandidate(cfg, info, roi, targetKbps, workDir, settings, rateControl, idx, s)
+		return evaluatePeripheryCandidate(cfg, info, selection, targetKbps, workDir, settings, rateControl, idx, s)
 	}
 
 	return searchPeripheryCandidatesInterpolated(
@@ -331,7 +339,7 @@ func fitPeripheryCandidatesInterpolated(
 func evaluatePeripheryCandidate(
 	cfg Config,
 	info VideoInfo,
-	roi ROI,
+	selection ROISelection,
 	targetKbps float64,
 	workDir string,
 	settings []peripherySetting,
@@ -347,7 +355,7 @@ func evaluatePeripheryCandidate(
 		s.Blur,
 	))
 
-	if err := renderROICandidate(cfg, info, roi, path, cfg.ROIHighQualityCRF, s.Scale, s.Blur, targetKbps); err != nil {
+	if err := renderROICandidate(cfg, info, selection, path, cfg.ROIHighQualityCRF, s.Scale, s.Blur, targetKbps); err != nil {
 		return Candidate{}, err
 	}
 
@@ -370,7 +378,7 @@ func evaluatePeripheryCandidate(
 
 	if cfg.ROIFitMetric {
 		logPath := filepath.Join(workDir, fmt.Sprintf("roi_candidate_%02d_psnr.log", idx))
-		if err := attachROIPSNRMetric(cfg, roi, &c, logPath); err != nil {
+		if err := attachROIPSNRMetric(cfg, selection.ROI, &c, logPath); err != nil {
 			fmt.Printf("      warning: ROI candidate metric failed: %v\n", err)
 		}
 	}
@@ -413,7 +421,7 @@ func logROICandidate(c Candidate, idx int, total int) {
 }
 
 // fitROIEmergencyCRF raises ROI CRF only when preserving high-quality ROI cannot reach the target.
-func fitROIEmergencyCRF(cfg Config, info VideoInfo, roi ROI, targetKbps float64, workDir string, scale float64, blur int) ([]Candidate, error) {
+func fitROIEmergencyCRF(cfg Config, info VideoInfo, selection ROISelection, targetKbps float64, workDir string, scale float64, blur int) ([]Candidate, error) {
 	cache := map[int]Candidate{}
 
 	eval := func(crf int) (Candidate, error) {
@@ -423,7 +431,7 @@ func fitROIEmergencyCRF(cfg Config, info VideoInfo, roi ROI, targetKbps float64,
 
 		path := filepath.Join(workDir, fmt.Sprintf("roi_emergency_crf_%02d_scale_%.2f_blur_%02d.mp4", crf, scale, blur))
 
-		if err := renderROICandidateCRF(cfg, info, roi, path, crf, scale, blur); err != nil {
+		if err := renderROICandidateCRFForSelection(cfg, info, selection, path, crf, scale, blur); err != nil {
 			return Candidate{}, err
 		}
 
@@ -486,22 +494,26 @@ func fitROIEmergencyCRF(cfg Config, info VideoInfo, roi ROI, targetKbps float64,
 }
 
 // renderROICandidate dispatches to the selected ROI rate-control mode.
-func renderROICandidate(cfg Config, info VideoInfo, roi ROI, output string, crf int, scale float64, blur int, targetKbps float64) error {
+func renderROICandidate(cfg Config, info VideoInfo, selection ROISelection, output string, crf int, scale float64, blur int, targetKbps float64) error {
 	if roiRateControl(cfg) == "abr" {
-		return renderROICandidateABR(cfg, info, roi, output, scale, blur, targetKbps)
+		return renderROICandidateABRForSelection(cfg, info, selection, output, scale, blur, targetKbps)
 	}
-	return renderROICandidateCRF(cfg, info, roi, output, crf, scale, blur)
+	return renderROICandidateCRFForSelection(cfg, info, selection, output, crf, scale, blur)
 }
 
-func renderROIQPMapCandidate(cfg Config, info VideoInfo, roi ROI, output string, crf int, targetKbps float64) error {
+func renderROIQPMapCandidate(cfg Config, info VideoInfo, selection ROISelection, output string, crf int, targetKbps float64) error {
 	if roiRateControl(cfg) == "abr" {
-		return renderROIQPMapCandidateABR(cfg, info, roi, output, targetKbps)
+		return renderROIQPMapCandidateABRForSelection(cfg, info, selection, output, targetKbps)
 	}
-	return renderROIQPMapCandidateCRF(cfg, info, roi, output, crf)
+	return renderROIQPMapCandidateCRFForSelection(cfg, info, selection, output, crf)
 }
 
 func renderROIQPMapCandidateCRF(cfg Config, info VideoInfo, roi ROI, output string, crf int) error {
-	filter, err := buildROIQPMapFilter(cfg, info, roi)
+	return renderROIQPMapCandidateCRFForSelection(cfg, info, staticROISelection(roi), output, crf)
+}
+
+func renderROIQPMapCandidateCRFForSelection(cfg Config, info VideoInfo, selection ROISelection, output string, crf int) error {
+	filter, err := buildROIQPMapFilterForSelection(cfg, info, selection)
 	if err != nil {
 		return err
 	}
@@ -522,11 +534,15 @@ func renderROIQPMapCandidateCRF(cfg Config, info VideoInfo, roi ROI, output stri
 }
 
 func renderROIQPMapCandidateABR(cfg Config, info VideoInfo, roi ROI, output string, targetKbps float64) error {
+	return renderROIQPMapCandidateABRForSelection(cfg, info, staticROISelection(roi), output, targetKbps)
+}
+
+func renderROIQPMapCandidateABRForSelection(cfg Config, info VideoInfo, selection ROISelection, output string, targetKbps float64) error {
 	if targetKbps <= 0 {
 		return errors.New("targetKbps must be greater than zero for ROI QP-map ABR encoding")
 	}
 
-	filter, err := buildROIQPMapFilter(cfg, info, roi)
+	filter, err := buildROIQPMapFilterForSelection(cfg, info, selection)
 	if err != nil {
 		return err
 	}
@@ -580,7 +596,11 @@ func renderROIQPMapCandidateABR(cfg Config, info VideoInfo, roi ROI, output stri
 
 // renderROICandidateCRF encodes an ROI candidate with fixed quality settings.
 func renderROICandidateCRF(cfg Config, info VideoInfo, roi ROI, output string, crf int, scale float64, blur int) error {
-	filter := buildROIFilter(cfg, info, roi, scale, blur)
+	return renderROICandidateCRFForSelection(cfg, info, staticROISelection(roi), output, crf, scale, blur)
+}
+
+func renderROICandidateCRFForSelection(cfg Config, info VideoInfo, selection ROISelection, output string, crf int, scale float64, blur int) error {
+	filter := buildROIFilterForSelection(cfg, info, selection, scale, blur)
 
 	args := []string{
 		"-hide_banner",
@@ -599,11 +619,15 @@ func renderROICandidateCRF(cfg Config, info VideoInfo, roi ROI, output string, c
 
 // renderROICandidateABR encodes an ROI candidate around the requested average bitrate.
 func renderROICandidateABR(cfg Config, info VideoInfo, roi ROI, output string, scale float64, blur int, targetKbps float64) error {
+	return renderROICandidateABRForSelection(cfg, info, staticROISelection(roi), output, scale, blur, targetKbps)
+}
+
+func renderROICandidateABRForSelection(cfg Config, info VideoInfo, selection ROISelection, output string, scale float64, blur int, targetKbps float64) error {
 	if targetKbps <= 0 {
 		return errors.New("targetKbps must be greater than zero for ROI ABR encoding")
 	}
 
-	filter := buildROIFilter(cfg, info, roi, scale, blur)
+	filter := buildROIFilterForSelection(cfg, info, selection, scale, blur)
 	bitrate, maxrate, bufsize := roiRateArgs(cfg, targetKbps)
 
 	baseArgs := []string{
@@ -654,10 +678,26 @@ func renderROICandidateABR(cfg Config, info VideoInfo, roi ROI, output string, s
 
 // buildROIQPMapFilter attaches encoder-level ROI side data without changing pixels.
 func buildROIQPMapFilter(cfg Config, info VideoInfo, roi ROI) (string, error) {
+	return buildROIQPMapFilterForSelection(cfg, info, staticROISelection(roi))
+}
+
+func buildROIQPMapFilterForSelection(cfg Config, info VideoInfo, selection ROISelection) (string, error) {
 	if usesROIBlockMap(cfg) {
 		return buildROIBlockQPMapFilter(cfg, info)
 	}
 
+	timeline := normalizedROITimeline(selection, info)
+	if len(timeline) > 1 {
+		return buildDynamicROIQPMapFilter(cfg, info, timeline), nil
+	}
+
+	parts := roiQPMapFilters(cfg, info, selection.ROI)
+	parts = append(parts, "format=yuv420p[v]")
+
+	return strings.Join(parts, ","), nil
+}
+
+func roiQPMapFilters(cfg Config, info VideoInfo, roi ROI) []string {
 	middle := middleROI(cfg, roi, info)
 
 	var parts []string
@@ -688,9 +728,28 @@ func buildROIQPMapFilter(cfg Config, info VideoInfo, roi ROI) (string, error) {
 			cfg.ROIQOffset,
 		))
 	}
-	parts = append(parts, "format=yuv420p[v]")
 
-	return strings.Join(parts, ","), nil
+	return parts
+}
+
+func buildDynamicROIQPMapFilter(cfg Config, info VideoInfo, timeline []TimedROI) string {
+	chains := make([]string, 0, len(timeline)*2+1)
+	labels := make([]string, 0, len(timeline))
+
+	for i, item := range timeline {
+		sourceLabel := fmt.Sprintf("[track_qp_src_%d]", i)
+		outputLabel := fmt.Sprintf("[track_qp_seg_%d]", i)
+
+		chains = append(chains, trimSegmentChain(item, sourceLabel))
+
+		parts := roiQPMapFilters(cfg, info, item.ROI)
+		parts = append(parts, "format=yuv420p")
+		chains = append(chains, sourceLabel+strings.Join(parts, ",")+outputLabel)
+		labels = append(labels, outputLabel)
+	}
+
+	chains = append(chains, strings.Join(labels, "")+fmt.Sprintf("concat=n=%d:v=1:a=0,format=yuv420p[v]", len(labels)))
+	return strings.Join(chains, ";")
 }
 
 func buildROIBlockQPMapFilter(cfg Config, info VideoInfo) (string, error) {
@@ -725,33 +784,101 @@ func buildROIBlockQPMapFilter(cfg Config, info VideoInfo) (string, error) {
 
 // buildROIFilter creates low, middle, and original-ROI layers before final encoding.
 func buildROIFilter(cfg Config, info VideoInfo, roi ROI, scale float64, blur int) string {
+	return buildROIFilterForSelection(cfg, info, staticROISelection(roi), scale, blur)
+}
+
+func buildROIFilterForSelection(cfg Config, info VideoInfo, selection ROISelection, scale float64, blur int) string {
+	timeline := normalizedROITimeline(selection, info)
+	if len(timeline) > 1 {
+		return buildDynamicROIFilter(cfg, info, timeline, scale, blur)
+	}
+
+	return buildStaticROIFilterChain("[0:v]", "v", "", cfg, info, selection.ROI, scale, blur)
+}
+
+func buildDynamicROIFilter(cfg Config, info VideoInfo, timeline []TimedROI, scale float64, blur int) string {
+	chains := make([]string, 0, len(timeline)*2+1)
+	labels := make([]string, 0, len(timeline))
+
+	for i, item := range timeline {
+		sourceLabel := fmt.Sprintf("[track_mask_src_%d]", i)
+		outputName := fmt.Sprintf("track_mask_seg_%d", i)
+		outputLabel := "[" + outputName + "]"
+
+		chains = append(chains, trimSegmentChain(item, sourceLabel))
+		chains = append(chains, buildStaticROIFilterChain(sourceLabel, outputName, fmt.Sprintf("track_mask_%d_", i), cfg, info, item.ROI, scale, blur))
+		labels = append(labels, outputLabel)
+	}
+
+	chains = append(chains, strings.Join(labels, "")+fmt.Sprintf("concat=n=%d:v=1:a=0,format=yuv420p[v]", len(labels)))
+	return strings.Join(chains, ";")
+}
+
+func trimSegmentChain(item TimedROI, outputLabel string) string {
+	return fmt.Sprintf(
+		"[0:v]trim=start=%.3f:end=%.3f,setpts=PTS-STARTPTS%s",
+		item.StartSeconds,
+		item.EndSeconds,
+		outputLabel,
+	)
+}
+
+func buildStaticROIFilterChain(inputLabel string, outputName string, prefix string, cfg Config, info VideoInfo, roi ROI, scale float64, blur int) string {
 	middle := middleROI(cfg, roi, info)
 	middleScale, middleBlur := middleQualitySettings(cfg, scale, blur)
 	lowFilter := buildPeripheryFilter(info, scale, blur)
 	middleFilter := buildPeripheryFilter(info, middleScale, middleBlur)
+	lowSrc := filterLabel(prefix + "lowsrc")
+	middleSrc := filterLabel(prefix + "middlesrc")
+	roiSrc := filterLabel(prefix + "roisrc")
+	low := filterLabel(prefix + "low")
+	mid := filterLabel(prefix + "mid")
+	roiLabel := filterLabel(prefix + "roi")
+	withMid := filterLabel(prefix + "withmid")
+	outputLabel := filterLabel(outputName)
 
 	return fmt.Sprintf(
-		"[0:v]split=3[lowsrc][middlesrc][roisrc];"+
-			"[lowsrc]%s[low];"+
-			"[middlesrc]%s,crop=%d:%d:%d:%d[mid];"+
-			"[roisrc]crop=%d:%d:%d:%d,format=yuv420p[roi];"+
-			"[low][mid]overlay=%d:%d[withmid];"+
-			"[withmid][roi]overlay=%d:%d,format=yuv420p[v]",
+		"%ssplit=3%s%s%s;"+
+			"%s%s%s;"+
+			"%s%s,crop=%d:%d:%d:%d%s;"+
+			"%scrop=%d:%d:%d:%d,format=yuv420p%s;"+
+			"%s%soverlay=%d:%d%s;"+
+			"%s%soverlay=%d:%d,format=yuv420p%s",
+		inputLabel,
+		lowSrc,
+		middleSrc,
+		roiSrc,
+		lowSrc,
 		lowFilter,
+		low,
+		middleSrc,
 		middleFilter,
 		middle.W,
 		middle.H,
 		middle.X,
 		middle.Y,
+		mid,
+		roiSrc,
 		roi.W,
 		roi.H,
 		roi.X,
 		roi.Y,
+		roiLabel,
+		low,
+		mid,
 		middle.X,
 		middle.Y,
+		withMid,
+		withMid,
+		roiLabel,
 		roi.X,
 		roi.Y,
+		outputLabel,
 	)
+}
+
+func filterLabel(name string) string {
+	return "[" + name + "]"
 }
 
 // buildPeripheryFilter builds the scaling and blur chain applied outside the ROI.

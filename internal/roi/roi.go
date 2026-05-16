@@ -13,10 +13,23 @@ import (
 	"strings"
 )
 
-// selectROI chooses either a static ROI or a simple motion-derived ROI.
+// selectROI chooses either a static ROI, model-derived ROI, motion-derived ROI, or block map ROI.
 func selectROI(cfg Config, info VideoInfo, tmpDir string) (ROI, error) {
+	selection, err := selectROISelection(cfg, info, tmpDir)
+	if err != nil {
+		return ROI{}, err
+	}
+
+	return selection.ROI, nil
+}
+
+func selectROISelection(cfg Config, info VideoInfo, tmpDir string) (ROISelection, error) {
 	if usesROIBlockMap(cfg) {
-		return blockMapROI(cfg, info)
+		r, err := blockMapROI(cfg, info)
+		if err != nil {
+			return ROISelection{}, err
+		}
+		return staticROISelection(r), nil
 	}
 
 	switch roiMode(cfg) {
@@ -24,28 +37,41 @@ func selectROI(cfg Config, info VideoInfo, tmpDir string) (ROI, error) {
 		if strings.TrimSpace(cfg.ROIString) == "" {
 			r := defaultCenterROI(info)
 			r.Source = "static-default-center"
-			return clampROI(r, info), nil
+			return staticROISelection(clampROI(r, info)), nil
 		}
 
 		r, err := parseROI(cfg.ROIString, info)
 		if err != nil {
-			return ROI{}, err
+			return ROISelection{}, err
 		}
 
 		r.Source = "static-cli"
-		return clampROI(r, info), nil
+		return staticROISelection(clampROI(r, info)), nil
 
 	case "motion":
 		r, err := detectMotionROI(cfg, info, tmpDir)
 		if err != nil {
-			return ROI{}, err
+			return ROISelection{}, err
 		}
 
-		return clampROI(r, info), nil
+		return staticROISelection(clampROI(r, info)), nil
+
+	case "cv":
+		selection, err := detectCVROISelection(cfg, info, tmpDir)
+		if err != nil {
+			return ROISelection{}, err
+		}
+
+		selection.ROI = clampROI(selection.ROI, info)
+		return selection, nil
 
 	default:
-		return ROI{}, fmt.Errorf("unknown --mode %q; use static, motion, or blocks", cfg.Mode)
+		return ROISelection{}, fmt.Errorf("unknown --mode %q; use static, motion, cv, or blocks", cfg.Mode)
 	}
+}
+
+func staticROISelection(roi ROI) ROISelection {
+	return ROISelection{ROI: roi}
 }
 
 func roiMode(cfg Config) string {
@@ -55,6 +81,8 @@ func roiMode(cfg Config) string {
 		return "static"
 	case "motion":
 		return "motion"
+	case "cv", "model", "face", "faces", "face-detect", "face_detect", "pigo", "pigo-facefinder":
+		return "cv"
 	case "block", "blocks", "qp-blocks", "qp_blocks", "qp-map-blocks", "qp_map_blocks":
 		return "blocks"
 	default:
