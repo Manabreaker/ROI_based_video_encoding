@@ -7,7 +7,8 @@ COPY cmd ./cmd
 COPY internal ./internal
 
 # Build the CLI from the package that exists in this repository.
-RUN CGO_ENABLED=0 go build -o /roi-poc ./cmd/roi
+RUN go get github.com/Manabreaker/ROI_based_video_encoding/internal/roi && \
+    CGO_ENABLED=0 go build -o /roi-poc ./cmd/roi
 
 FROM debian:bookworm-slim
 

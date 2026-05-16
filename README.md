@@ -311,14 +311,16 @@ docker run --rm -v "$PWD:/work" roi-poc \
   --target-bitrate 500k
 ```
 
-GPU-кодирование изнутри Docker требует NVIDIA runtime на хосте:
+GPU-акселирация изнутри Docker в данный момент не поддерживается нативно, так как требует специфических драйверов и runtime (например, NVIDIA Container Toolkit для NVENC).
+Если нужно протестировать аппаратный энкодер, рекомендуется запускать CLI напрямую на хосте с установленным FFmpeg и поддержкой нужного энкодера.
+В текущей реализации необходимо явно указать `--encoder libx264` для CPU-энкодинга при запуске внутри Docker, так как автоматическое определение аппаратного энкодера отдает приоритет GPU-level енкодерам, которые не доступны "из коробки".
 
 ```bash
 docker run --rm --gpus all -v "$PWD:/work" roi-poc \
-  --input examples/ball.mp4 \
-  --out out/docker_nvenc \
-  --encoder h264_nvenc \
-  --target-bitrate 500k
+  --input examples/dynamic/8707797-uhd_3840_2160_30fps.mp4 \
+  --out out/docker_example \
+  --encoder libx264 \
+  --target-bitrate 5000k
 ```
 
 ## Проверки для разработки
