@@ -128,43 +128,9 @@ func comparisonDrawBoxes(cfg Config, info VideoInfo, roi ROI, roiDecision Encode
 		return append(left, right...), nil
 	}
 
-	middle := middleROI(cfg, roi, info)
-	boxes := []string{
-		fmt.Sprintf(
-			"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=4",
-			roi.X,
-			roi.Y,
-			roi.W,
-			roi.H,
-		),
-	}
-	if roiDecision.ROIControl != "qp-map" {
-		boxes = append(boxes, fmt.Sprintf(
-			"drawbox=x=%d:y=0:w=%d:h=%d:color=red@0.90:t=5",
-			info.Width,
-			info.Width,
-			info.Height,
-		))
-	}
-	boxes = append(
-		boxes,
-		fmt.Sprintf(
-			"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=5",
-			info.Width+middle.X,
-			middle.Y,
-			middle.W,
-			middle.H,
-		),
-		fmt.Sprintf(
-			"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=4",
-			info.Width+roi.X,
-			roi.Y,
-			roi.W,
-			roi.H,
-		),
-	)
-
-	return boxes, nil
+	left := staticZoneDrawBoxes(cfg, info, roi, 0, 5, 5, 4)
+	right := staticZoneDrawBoxes(cfg, info, roi, info.Width, 5, 5, 4)
+	return append(left, right...), nil
 }
 
 func roiBlockDrawBoxes(cfg Config, info VideoInfo, xOffset int) ([]string, error) {
@@ -172,6 +138,7 @@ func roiBlockDrawBoxes(cfg Config, info VideoInfo, xOffset int) ([]string, error
 	if err != nil {
 		return nil, err
 	}
+	rects = mergeQPMapBlockRectsForDisplay(rects)
 
 	boxes := make([]string, 0, len(rects))
 	for _, r := range rects {
@@ -189,15 +156,66 @@ func roiBlockDrawBoxes(cfg Config, info VideoInfo, xOffset int) ([]string, error
 
 func roiBlockBoxColor(qoffset float64) string {
 	switch {
-	case qoffset < -0.20:
+	case qOffsetColorMatch(qoffset, -0.40):
 		return "lime@0.95"
-	case qoffset < 0:
+	case qOffsetColorMatch(qoffset, -0.25):
 		return "orange@0.95"
+	case qOffsetColorMatch(qoffset, -0.10):
+		return "yellow@0.95"
+	case qOffsetColorMatch(qoffset, 0.15):
+		return "red@0.95"
+	case qoffset <= -0.35:
+		return "lime@0.95"
+	case qoffset <= -0.20:
+		return "orange@0.95"
+	case qoffset < 0:
+		return "yellow@0.95"
 	case qoffset > 0:
 		return "red@0.95"
 	default:
 		return "white@0.70"
 	}
+}
+
+func qOffsetColorMatch(got float64, want float64) bool {
+	return math.Abs(got-want) < 0.0000001
+}
+
+func staticZoneDrawBoxes(cfg Config, info VideoInfo, roi ROI, xOffset int, redThickness int, middleThickness int, roiThickness int) []string {
+	boxes := make([]string, 0, 3)
+	if roiControl(cfg) != "qp-map" {
+		boxes = append(boxes, fmt.Sprintf(
+			"drawbox=x=%d:y=0:w=%d:h=%d:color=red@0.90:t=%d",
+			xOffset,
+			info.Width,
+			info.Height,
+			redThickness,
+		))
+	}
+	if shouldDrawMiddleZone(cfg) {
+		middle := middleROI(cfg, roi, info)
+		boxes = append(boxes, fmt.Sprintf(
+			"drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=%d",
+			xOffset+middle.X,
+			middle.Y,
+			middle.W,
+			middle.H,
+			middleThickness,
+		))
+	}
+	boxes = append(boxes, fmt.Sprintf(
+		"drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.90:t=%d",
+		xOffset+roi.X,
+		roi.Y,
+		roi.W,
+		roi.H,
+		roiThickness,
+	))
+	return boxes
+}
+
+func shouldDrawMiddleZone(cfg Config) bool {
+	return roiControl(cfg) != "qp-map" || cfg.ROIMiddleQOffset != 0
 }
 
 // drawPanelTextChain builds drawtext filters with per-window current bitrate labels.
@@ -337,7 +355,6 @@ func renderPreview(cfg Config, info VideoInfo, roi ROI, output string) error {
 		t = math.Min(info.Duration*0.25, math.Max(0.0, info.Duration-0.1))
 	}
 
-	middle := middleROI(cfg, roi, info)
 	var boxes []string
 	if usesROIBlockMap(cfg) {
 		blockBoxes, err := roiBlockDrawBoxes(cfg, info, 0)
@@ -345,15 +362,8 @@ func renderPreview(cfg Config, info VideoInfo, roi ROI, output string) error {
 			return err
 		}
 		boxes = append(boxes, blockBoxes...)
-	} else if roiControl(cfg) != "qp-map" {
-		boxes = append(boxes, fmt.Sprintf("drawbox=x=0:y=0:w=%d:h=%d:color=red@0.90:t=6", info.Width, info.Height))
-	}
-	if !usesROIBlockMap(cfg) {
-		boxes = append(
-			boxes,
-			fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=orange@0.95:t=6", middle.X, middle.Y, middle.W, middle.H),
-			fmt.Sprintf("drawbox=x=%d:y=%d:w=%d:h=%d:color=lime@0.95:t=6", roi.X, roi.Y, roi.W, roi.H),
-		)
+	} else {
+		boxes = append(boxes, staticZoneDrawBoxes(cfg, info, roi, 0, 6, 6, 6)...)
 	}
 	boxes = append(boxes, "format=rgb24")
 

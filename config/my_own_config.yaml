@@ -1,0 +1,41 @@
+input: examples/dynamic/8707797-uhd_3840_2160_30fps.mp4
+out: out/ui_example
+mode: blocks
+roi-control: qp-map
+roi-block-size: 128
+roi-blocks:
+    - col: 8
+      row: 0
+      w: 2
+      h: 17
+      qoffset: -0.1
+    - col: 10
+      row: 0
+      w: 2
+      h: 17
+      qoffset: -0.25
+    - col: 12
+      row: 0
+      w: 5
+      h: 17
+      qoffset: -0.4
+    - col: 17
+      row: 0
+      w: 2
+      h: 17
+      qoffset: -0.25
+    - col: 19
+      row: 0
+      w: 2
+      h: 17
+      qoffset: -0.1
+target-bitrate: 5000k
+roi-rate-control: abr
+roi-two-pass: false
+encoder: auto
+preset: veryfast
+nvenc-preset: p4
+bitrate-window: 2
+overlay-bitrate: true
+metrics: false
+serve: false

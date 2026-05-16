@@ -104,6 +104,157 @@ func TestPanelBaseFiltersForBlockQPMapROI(t *testing.T) {
 	}
 }
 
+func TestROIBlockBoxColorMatchesUIPalette(t *testing.T) {
+	tests := map[float64]string{
+		-0.40: "lime@0.95",
+		-0.25: "orange@0.95",
+		-0.10: "yellow@0.95",
+		0.15:  "red@0.95",
+	}
+
+	for qoffset, want := range tests {
+		if got := roiBlockBoxColor(qoffset); got != want {
+			t.Fatalf("roiBlockBoxColor(%.2f) = %q, want %q", qoffset, got, want)
+		}
+	}
+}
+
+func TestROIBlockDrawBoxesMergesAdjacentSameColorBlocks(t *testing.T) {
+	boxes, err := roiBlockDrawBoxes(
+		Config{
+			ROIBlockSize: 64,
+			ROIBlocks: []QPMapBlock{
+				{Col: 0, Row: 0, QOffset: -0.40},
+				{Col: 1, Row: 0, QOffset: -0.40},
+				{Col: 0, Row: 1, QOffset: -0.40},
+				{Col: 1, Row: 1, QOffset: -0.40},
+				{Col: 3, Row: 0, QOffset: -0.25},
+			},
+		},
+		VideoInfo{Width: 320, Height: 192},
+		0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(boxes, ",")
+
+	if len(boxes) != 2 {
+		t.Fatalf("draw boxes = %d, want 2 merged boxes: %#v", len(boxes), boxes)
+	}
+	if !strings.Contains(joined, "drawbox=x=0:y=0:w=128:h=128:color=lime@0.95:t=3") {
+		t.Fatalf("missing merged green 2x2 box:\n%s", joined)
+	}
+	if strings.Contains(joined, "x=64:y=0:w=64:h=64") || strings.Contains(joined, "x=0:y=64:w=64:h=64") {
+		t.Fatalf("internal block edges should not be drawn:\n%s", joined)
+	}
+	if !strings.Contains(joined, "drawbox=x=192:y=0:w=64:h=64:color=orange@0.95:t=3") {
+		t.Fatalf("missing separate orange box:\n%s", joined)
+	}
+}
+
+func TestROIBlockDrawBoxesKeepsDifferentColorsSeparate(t *testing.T) {
+	boxes, err := roiBlockDrawBoxes(
+		Config{
+			ROIBlockSize: 64,
+			ROIBlocks: []QPMapBlock{
+				{Col: 0, Row: 0, QOffset: -0.40},
+				{Col: 1, Row: 0, QOffset: -0.25},
+			},
+		},
+		VideoInfo{Width: 192, Height: 128},
+		0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(boxes, ",")
+
+	if len(boxes) != 2 {
+		t.Fatalf("draw boxes = %d, want separate color boxes: %#v", len(boxes), boxes)
+	}
+	if !strings.Contains(joined, "color=lime@0.95") || !strings.Contains(joined, "color=orange@0.95") {
+		t.Fatalf("different qoffset colors should remain visible:\n%s", joined)
+	}
+}
+
+func TestComparisonDrawBoxesMirrorsStaticQPMapZones(t *testing.T) {
+	boxes, err := comparisonDrawBoxes(
+		Config{
+			ROIControl:       "qp-map",
+			ROIMiddleQOffset: -0.10,
+			MiddleMargin:     0.25,
+		},
+		VideoInfo{Width: 640, Height: 360},
+		ROI{X: 160, Y: 90, W: 160, H: 90},
+		EncodeDecision{ROIControl: "qp-map"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(boxes, ",")
+
+	if got := strings.Count(joined, "color=orange@0.95"); got != 2 {
+		t.Fatalf("orange middle boxes = %d, want 2:\n%s", got, joined)
+	}
+	if got := strings.Count(joined, "color=lime@0.90"); got != 2 {
+		t.Fatalf("green ROI boxes = %d, want 2:\n%s", got, joined)
+	}
+	if strings.Contains(joined, "color=red@0.90") {
+		t.Fatalf("QP-map comparison should not draw mask periphery red:\n%s", joined)
+	}
+}
+
+func TestComparisonDrawBoxesHidesDisabledQPMapMiddleZone(t *testing.T) {
+	boxes, err := comparisonDrawBoxes(
+		Config{
+			ROIControl:       "qp-map",
+			ROIMiddleQOffset: 0,
+			MiddleMargin:     0.25,
+		},
+		VideoInfo{Width: 640, Height: 360},
+		ROI{X: 160, Y: 90, W: 160, H: 90},
+		EncodeDecision{ROIControl: "qp-map"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(boxes, ",")
+
+	if strings.Contains(joined, "color=orange@0.95") {
+		t.Fatalf("disabled QP-map middle qoffset should not draw orange middle box:\n%s", joined)
+	}
+	if got := strings.Count(joined, "color=lime@0.90"); got != 2 {
+		t.Fatalf("green ROI boxes = %d, want 2:\n%s", got, joined)
+	}
+}
+
+func TestComparisonDrawBoxesMirrorsMaskZones(t *testing.T) {
+	boxes, err := comparisonDrawBoxes(
+		Config{
+			ROIControl:   "mask",
+			MiddleMargin: 0.25,
+		},
+		VideoInfo{Width: 640, Height: 360},
+		ROI{X: 160, Y: 90, W: 160, H: 90},
+		EncodeDecision{ROIControl: "mask"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(boxes, ",")
+
+	for color, want := range map[string]int{
+		"color=red@0.90":    2,
+		"color=orange@0.95": 2,
+		"color=lime@0.90":   2,
+	} {
+		if got := strings.Count(joined, color); got != want {
+			t.Fatalf("%s boxes = %d, want %d:\n%s", color, got, want, joined)
+		}
+	}
+}
+
 func TestBuildComparisonFilterScalesWideHardwareH264HStack(t *testing.T) {
 	for _, cfg := range []Config{
 		{VideoEncoder: "h264_nvenc", NVENCPreset: "p4"},

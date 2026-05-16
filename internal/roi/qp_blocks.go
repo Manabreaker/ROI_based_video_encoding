@@ -3,6 +3,7 @@ package roi
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -111,6 +112,107 @@ func qpMapBlockRects(cfg Config, info VideoInfo) ([]qpMapBlockRect, error) {
 	}
 
 	return rects, nil
+}
+
+func mergeQPMapBlockRectsForDisplay(rects []qpMapBlockRect) []qpMapBlockRect {
+	if len(rects) <= 1 {
+		return rects
+	}
+
+	rectMap := make(map[[2]int]qpMapBlockRect, len(rects))
+	keys := make([][2]int, 0, len(rects))
+	for _, r := range rects {
+		key := [2]int{r.Col, r.Row}
+		if _, ok := rectMap[key]; !ok {
+			keys = append(keys, key)
+		}
+		rectMap[key] = r
+	}
+
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i][1] != keys[j][1] {
+			return keys[i][1] < keys[j][1]
+		}
+		return keys[i][0] < keys[j][0]
+	})
+
+	visited := make(map[[2]int]bool, len(rects))
+	merged := make([]qpMapBlockRect, 0, len(rects))
+
+	for _, start := range keys {
+		if visited[start] {
+			continue
+		}
+
+		first := rectMap[start]
+		cols := 1
+		for {
+			next := [2]int{start[0] + cols, start[1]}
+			r, ok := rectMap[next]
+			if !ok || visited[next] || !sameDisplayQOffset(r.QOffset, first.QOffset) {
+				break
+			}
+			cols++
+		}
+
+		rows := 1
+		for {
+			row := start[1] + rows
+			canExtend := true
+			for col := start[0]; col < start[0]+cols; col++ {
+				key := [2]int{col, row}
+				r, ok := rectMap[key]
+				if !ok || visited[key] || !sameDisplayQOffset(r.QOffset, first.QOffset) {
+					canExtend = false
+					break
+				}
+			}
+			if !canExtend {
+				break
+			}
+			rows++
+		}
+
+		minX := first.X
+		minY := first.Y
+		maxX := first.X + first.W
+		maxY := first.Y + first.H
+		for row := start[1]; row < start[1]+rows; row++ {
+			for col := start[0]; col < start[0]+cols; col++ {
+				key := [2]int{col, row}
+				visited[key] = true
+				r := rectMap[key]
+				if r.X < minX {
+					minX = r.X
+				}
+				if r.Y < minY {
+					minY = r.Y
+				}
+				if r.X+r.W > maxX {
+					maxX = r.X + r.W
+				}
+				if r.Y+r.H > maxY {
+					maxY = r.Y + r.H
+				}
+			}
+		}
+
+		merged = append(merged, qpMapBlockRect{
+			X:       minX,
+			Y:       minY,
+			W:       maxX - minX,
+			H:       maxY - minY,
+			Col:     first.Col,
+			Row:     first.Row,
+			QOffset: first.QOffset,
+		})
+	}
+
+	return merged
+}
+
+func sameDisplayQOffset(a float64, b float64) bool {
+	return math.Abs(a-b) < 0.0000001
 }
 
 func evenBlockExtent(v int) int {

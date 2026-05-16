@@ -207,33 +207,33 @@ Fixed-quality режим:
 
 ## Важные флаги
 
-| Флаг                   | По умолчанию | Назначение                                                     |
-|------------------------|--------------|----------------------------------------------------------------|
-| `--input`              | -            | входной видеофайл, URL, RTSP или другой FFmpeg-readable source |
-| `--config`             | -            | YAML config; явно переданные флаги имеют приоритет             |
-| `--out`                | `out`        | директория для результата                                      |
-| `--mode`               | `static`     | режим ROI: `static`, `motion` или `blocks`                     |
-| `--roi`                | -            | ROI как `x,y,w,h`, в пикселях или долях кадра                  |
-| `--roi-block-size`     | `64`         | размер блока для `--mode blocks`                               |
-| `--roi-blocks`         | -            | QP-map блоки: `col,row,qoffset` или `col,row,w,h,qoffset`      |
-| `--target-bitrate`     | `1000k`      | целевой bitrate для ROI output                                 |
-| `--roi-control`        | `qp-map`     | `qp-map` или старый `mask` preprocessing                       |
-| `--roi-qoffset`        | `-0.30`      | QP offset для основной ROI в `qp-map` режиме                   |
-| `--roi-middle-qoffset` | `-0.10`      | QP offset для middle ring в `qp-map` режиме                    |
-| `--fit-roi`            | `true`       | подбирать параметры периферии около target bitrate             |
-| `--roi-rate-control`   | `abr`        | `abr` или `crf`                                                |
-| `--roi-crf`            | `16`         | CRF для ROI output в fixed-quality режиме                      |
-| `--middle-margin`      | `0.35`       | расширение оранжевой middle-zone вокруг ROI                    |
-| `--middle-scale`       | `0.67`       | scale для middle-zone перед обратным upscale                   |
-| `--middle-blur`        | `1`          | blur для middle-zone                                           |
-| `--periphery-scale`    | `0.35`       | scale периферии при `--fit-roi=false`                          |
-| `--blur`               | `2`          | blur периферии при `--fit-roi=false`                           |
+| Флаг                   | По умолчанию | Назначение                                                          |
+|------------------------|--------------|---------------------------------------------------------------------|
+| `--input`              | -            | входной видеофайл, URL, RTSP или другой FFmpeg-readable source      |
+| `--config`             | -            | YAML config; явно переданные флаги имеют приоритет                  |
+| `--out`                | `out`        | директория для результата                                           |
+| `--mode`               | `static`     | режим ROI: `static`, `motion` или `blocks`                          |
+| `--roi`                | -            | ROI как `x,y,w,h`, в пикселях или долях кадра                       |
+| `--roi-block-size`     | `64`         | размер блока для `--mode blocks`                                    |
+| `--roi-blocks`         | -            | QP-map блоки: `col,row,qoffset` или `col,row,w,h,qoffset`           |
+| `--target-bitrate`     | `1000k`      | целевой bitrate для ROI output                                      |
+| `--roi-control`        | `qp-map`     | `qp-map` или старый `mask` preprocessing                            |
+| `--roi-qoffset`        | `-0.30`      | QP offset для основной ROI в `qp-map` режиме                        |
+| `--roi-middle-qoffset` | `-0.10`      | QP offset для middle ring в `qp-map` режиме                         |
+| `--fit-roi`            | `true`       | подбирать параметры периферии около target bitrate                  |
+| `--roi-rate-control`   | `abr`        | `abr` или `crf`                                                     |
+| `--roi-crf`            | `16`         | CRF для ROI output в fixed-quality режиме                           |
+| `--middle-margin`      | `0.35`       | расширение оранжевой middle-zone вокруг ROI                         |
+| `--middle-scale`       | `0.67`       | scale для middle-zone перед обратным upscale                        |
+| `--middle-blur`        | `1`          | blur для middle-zone                                                |
+| `--periphery-scale`    | `0.35`       | scale периферии при `--fit-roi=false`                               |
+| `--blur`               | `2`          | blur периферии при `--fit-roi=false`                                |
 | `--encoder`            | `auto`       | `auto`, `libx264`, `h264_nvenc`, `h264_amf` или `h264_videotoolbox` |
-| `--overlay-bitrate`    | `true`       | рисовать текущий bitrate на comparison-видео                   |
-| `--bitrate-window`     | `1.0`        | размер окна bitrate в секундах                                 |
-| `--metrics`            | `true`       | считать ROI PSNR report                                        |
-| `--serve`              | `false`      | поднять локальный HTTP file server после обработки             |
-| `--fit-iterations`     | `9`          | максимум probe-ов interpolation search для ROI fitting         |
+| `--overlay-bitrate`    | `true`       | рисовать текущий bitrate на comparison-видео                        |
+| `--bitrate-window`     | `1.0`        | размер окна bitrate в секундах                                      |
+| `--metrics`            | `true`       | считать ROI PSNR report                                             |
+| `--serve`              | `false`      | поднять локальный HTTP file server после обработки                  |
+| `--fit-iterations`     | `9`          | максимум probe-ов interpolation search для ROI fitting              |
 
 Полный список флагов можно посмотреть через:
 
@@ -348,6 +348,24 @@ ffmpeg -hide_banner -encoders | grep -E 'h264_(nvenc|amf|videotoolbox)'
 
 ```bash
 --encoder libx264
+```
+
+## Использование UI для настройки ROI
+
+Соберите сервис:
+```bash
+go build -o roi-map-ui ./cmd/roi-map-ui
+```
+
+Запустите графический интерфейс на примере из репозитория:
+```bash
+./roi-map-ui \
+  --input examples/dynamic/8707797-uhd_3840_2160_30fps.mp4 \
+  --config-out config/my_own_config.yaml \
+  --out out/ui_example \
+  --target-bitrate 10000k \
+  --bitrate-window 2 \
+  --encoder auto
 ```
 
 ## Структура документации
