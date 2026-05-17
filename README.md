@@ -179,6 +179,7 @@ CV ROI через встроенную модель:
 После обработки откройте:
 
 ```text
+http://localhost:8080/roi_high_quality_region.mp4
 http://localhost:8080/comparison_baseline_vs_roi.mp4
 ```
 
@@ -382,12 +383,13 @@ go build -o roi-map-ui ./cmd/roi-map-ui
 ```bash
 ./roi-map-ui \
   --input examples/dynamic/8707797-uhd_3840_2160_30fps.mp4 \
-  --config-out config/my_own_config.yaml \
   --out out/ui_example \
   --target-bitrate 10000k \
   --bitrate-window 2 \
   --encoder auto
 ```
+
+В браузере разметьте ROI-блоки и нажмите `Запустить`. UI сам сохранит YAML-конфиг, положит копию `roi_blocks_config.yaml` в output-директорию, запустит обработку и после завершения покажет итоговый `roi_high_quality_region.mp4` прямо на странице. Кнопка `Save` остается для случая, когда нужно только сохранить конфиг и запустить `roi` вручную.
 
 ## Структура документации
 

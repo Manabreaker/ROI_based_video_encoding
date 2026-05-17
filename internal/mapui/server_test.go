@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Manabreaker/ROI_based_video_encoding/internal/roi"
 )
 
 func TestServerMeta(t *testing.T) {
@@ -105,6 +107,62 @@ func TestServerVideoSupportsGet(t *testing.T) {
 	}
 }
 
+func TestServerRunProcessesAndServesFinalResult(t *testing.T) {
+	server := newTestServer(t)
+	outDir := filepath.Join(t.TempDir(), "out")
+	var gotConfig roi.Config
+	server.runEncoder = func(cfg roi.Config) error {
+		gotConfig = cfg
+		if cfg.Serve {
+			t.Fatalf("UI run should not block on roi serve")
+		}
+		if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(cfg.OutDir, finalResultName), []byte("final video"), 0o644)
+	}
+
+	body := ConfigRequest{
+		OutDir:        outDir,
+		TargetBitrate: "500k",
+		Encoder:       "auto",
+		BitrateWindow: 2,
+		ROIBlockSize:  64,
+		Cells: []PaintCell{
+			{Col: 1, Row: 1, QOffset: -0.40},
+			{Col: 2, Row: 1, QOffset: -0.40},
+		},
+	}
+	rec := postJSONPath(t, server, "/api/run", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var response runResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if gotConfig.OutDir != outDir || gotConfig.Mode != "blocks" {
+		t.Fatalf("unexpected run config: %+v", gotConfig)
+	}
+	if response.ResultURL == "" || response.ResultPath != filepath.Join(outDir, finalResultName) {
+		t.Fatalf("unexpected run response: %+v", response)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "roi_blocks_config.yaml")); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, response.ResultURL, nil)
+	resultRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(resultRec, req)
+	if resultRec.Code != http.StatusOK {
+		t.Fatalf("result status = %d, body = %s", resultRec.Code, resultRec.Body.String())
+	}
+	if resultRec.Body.String() != "final video" {
+		t.Fatalf("result body = %q", resultRec.Body.String())
+	}
+}
+
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 
@@ -132,6 +190,10 @@ func writeTestFile(t *testing.T, path string) {
 }
 
 func postJSON(t *testing.T, server *Server, value any) *httptest.ResponseRecorder {
+	return postJSONPath(t, server, "/api/config", value)
+}
+
+func postJSONPath(t *testing.T, server *Server, path string, value any) *httptest.ResponseRecorder {
 	t.Helper()
 
 	data, err := json.Marshal(value)
@@ -139,7 +201,7 @@ func postJSON(t *testing.T, server *Server, value any) *httptest.ResponseRecorde
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(data))
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)

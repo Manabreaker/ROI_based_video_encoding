@@ -107,7 +107,7 @@ func TestWriteConfigWritesEncoderReadyYAML(t *testing.T) {
 	if !reflect.DeepEqual(got.ROIBlocks, blocks) {
 		t.Fatalf("ROIBlocks = %+v, want %+v", got.ROIBlocks, blocks)
 	}
-	if got.ROIRateControl != "abr" || got.ROITwoPass || !got.OverlayBitrate || got.Metrics || got.Serve {
+	if got.ROIRateControl != "abr" || got.ROITwoPass || !got.OverlayBitrate || got.Metrics || !got.Serve {
 		t.Fatalf("unexpected defaults: %+v", got)
 	}
 }

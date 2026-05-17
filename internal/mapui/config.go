@@ -130,7 +130,7 @@ func WriteConfig(path string, opts Options, req ConfigRequest, blocks []roi.QPMa
 		BitrateWindow:  req.BitrateWindow,
 		OverlayBitrate: true,
 		Metrics:        false,
-		Serve:          false,
+		Serve:          true,
 	}
 
 	data, err := yaml.Marshal(cfg)

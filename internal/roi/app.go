@@ -309,6 +309,7 @@ func Run(cfg Config) error {
 
 	if cfg.Serve {
 		fmt.Printf("\nServing %s at http://localhost%s/\n", cfg.OutDir, cfg.HTTPAddr)
+		fmt.Printf("Open ROI output: http://localhost%s/roi_high_quality_region.mp4\n", cfg.HTTPAddr)
 		fmt.Printf("Open comparison: http://localhost%s/comparison_baseline_vs_roi.mp4\n", cfg.HTTPAddr)
 		return serve(cfg.OutDir, cfg.HTTPAddr)
 	}

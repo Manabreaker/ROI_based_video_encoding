@@ -48,6 +48,15 @@ type configResponse struct {
 	Command    string `json:"command"`
 }
 
+type runResponse struct {
+	ConfigPath string `json:"configPath"`
+	OutputDir  string `json:"outputDir"`
+	ResultPath string `json:"resultPath"`
+	ResultURL  string `json:"resultUrl"`
+	BlockCount int    `json:"blockCount"`
+	RectCount  int    `json:"rectCount"`
+}
+
 type metaResponse struct {
 	Input         string         `json:"input"`
 	ConfigOut     string         `json:"configOut"`

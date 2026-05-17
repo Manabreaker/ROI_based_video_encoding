@@ -5,18 +5,29 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/Manabreaker/ROI_based_video_encoding/internal/roi"
 )
+
+const finalResultName = "roi_high_quality_region.mp4"
 
 // Server serves the browser painter and writes generated YAML configs.
 type Server struct {
-	opts       Options
-	inputPath  string
-	configPath string
-	mux        *http.ServeMux
+	opts          Options
+	inputPath     string
+	configPath    string
+	mux           *http.ServeMux
+	runEncoder    func(roi.Config) error
+	runMu         sync.Mutex
+	resultMu      sync.RWMutex
+	lastResultDir string
 }
 
 // NewServer creates a configured local UI server.
@@ -38,13 +49,16 @@ func NewServer(opts Options) (*Server, error) {
 		opts:       opts,
 		inputPath:  inputPath,
 		configPath: configPath,
+		runEncoder: roi.Run,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/video", s.handleVideo)
+	mux.HandleFunc("/result/", s.handleResult)
 	mux.HandleFunc("/api/meta", s.handleMeta)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/run", s.handleRun)
 	s.mux = mux
 
 	return s, nil
@@ -136,32 +150,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	defer func() {
-		_ = r.Body.Close()
-	}()
-
-	var req ConfigRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := validateConfigRequest(req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	blocks, err := GroupCells(req.Cells)
+	req, blocks, err := s.writePostedConfig(w, r, s.configPath)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if len(blocks) == 0 {
-		http.Error(w, "paint at least one ROI block", http.StatusBadRequest)
-		return
-	}
-	if err := WriteConfig(s.configPath, s.opts, req, blocks); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -171,6 +161,133 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		RectCount:  len(blocks),
 		Command:    fmt.Sprintf("go run ./cmd/roi --config %s", shellQuoteIfNeeded(s.opts.ConfigOut)),
 	})
+}
+
+func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
+	req, blocks, err := s.writePostedConfig(w, r, s.configPath)
+	if err != nil {
+		return
+	}
+
+	runConfigPath, err := s.writeOutputConfigCopy(req, blocks)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	cfg, err := roi.ParseArgs([]string{"--config", runConfigPath})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	cfg.Serve = false
+
+	if err := s.runEncoder(cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	outDirAbs, err := filepath.Abs(cfg.OutDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	resultPath := filepath.Join(outDirAbs, finalResultName)
+	if _, err := os.Stat(resultPath); err != nil {
+		http.Error(w, fmt.Sprintf("processing finished but final result %q is not available: %v", resultPath, err), http.StatusInternalServerError)
+		return
+	}
+
+	resultID := time.Now().UnixNano()
+	s.resultMu.Lock()
+	s.lastResultDir = outDirAbs
+	s.resultMu.Unlock()
+
+	writeJSON(w, runResponse{
+		ConfigPath: runConfigPath,
+		OutputDir:  outDirAbs,
+		ResultPath: resultPath,
+		ResultURL:  fmt.Sprintf("/result/%s?v=%d", finalResultName, resultID),
+		BlockCount: len(req.Cells),
+		RectCount:  len(blocks),
+	})
+}
+
+func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.resultMu.RLock()
+	dir := s.lastResultDir
+	s.resultMu.RUnlock()
+	if dir == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	http.StripPrefix("/result/", http.FileServer(http.Dir(dir))).ServeHTTP(w, r)
+}
+
+func (s *Server) writePostedConfig(w http.ResponseWriter, r *http.Request, path string) (ConfigRequest, []roi.QPMapBlock, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer func() {
+		_ = r.Body.Close()
+	}()
+
+	var req ConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return ConfigRequest{}, nil, err
+	}
+	if err := validateConfigRequest(req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return ConfigRequest{}, nil, err
+	}
+
+	blocks, err := GroupCells(req.Cells)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return ConfigRequest{}, nil, err
+	}
+	if len(blocks) == 0 {
+		err := fmt.Errorf("paint at least one ROI block")
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return ConfigRequest{}, nil, err
+	}
+	if err := WriteConfig(path, s.opts, req, blocks); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return ConfigRequest{}, nil, err
+	}
+
+	return req, blocks, nil
+}
+
+func (s *Server) writeOutputConfigCopy(req ConfigRequest, blocks []roi.QPMapBlock) (string, error) {
+	outDir, err := filepath.Abs(strings.TrimSpace(req.OutDir))
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return "", fmt.Errorf("create output directory: %w", err)
+	}
+
+	path := filepath.Join(outDir, "roi_blocks_config.yaml")
+	if err := WriteConfig(path, s.opts, req, blocks); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func writeJSON(w http.ResponseWriter, value any) {

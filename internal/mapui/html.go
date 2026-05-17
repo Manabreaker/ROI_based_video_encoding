@@ -36,7 +36,7 @@ const indexHTML = `<!doctype html>
       align-items: start;
     }
 
-    .stage, .side {
+    .stage, .side, .result {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -145,7 +145,7 @@ const indexHTML = `<!doctype html>
 
     .tool-row {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
     }
 
@@ -158,6 +158,11 @@ const indexHTML = `<!doctype html>
 
     .primary:hover { background: var(--blue-dark); }
 
+    .tool:disabled, .primary:disabled {
+      cursor: not-allowed;
+      opacity: 0.62;
+    }
+
     .status {
       min-height: 40px;
       padding: 10px;
@@ -167,6 +172,16 @@ const indexHTML = `<!doctype html>
       background: #f9fafb;
       font-size: 13px;
       overflow-wrap: anywhere;
+    }
+
+    .result {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 8px;
+    }
+
+    .result.hidden {
+      display: none;
     }
 
     @media (max-width: 900px) {
@@ -230,10 +245,16 @@ const indexHTML = `<!doctype html>
     <div class="tool-row">
       <button id="undo" class="tool" type="button">Undo</button>
       <button id="clear" class="tool" type="button">Clear</button>
-      <button id="confirm" class="primary" type="button">Confirm</button>
+      <button id="confirm" class="tool" type="button">Save</button>
+      <button id="run" class="primary" type="button">Запустить</button>
     </div>
     <div id="status" class="status">Loading...</div>
   </aside>
+
+  <section id="result" class="result hidden">
+    <label for="resultVideo">Итоговый результат</label>
+    <video id="resultVideo" controls playsinline preload="metadata"></video>
+  </section>
 </main>
 
 <script>
@@ -252,6 +273,10 @@ const indexHTML = `<!doctype html>
   var encoder = document.getElementById('encoder');
   var blockSize = document.getElementById('blockSize');
   var bitrateWindow = document.getElementById('bitrateWindow');
+  var confirm = document.getElementById('confirm');
+  var run = document.getElementById('run');
+  var result = document.getElementById('result');
+  var resultVideo = document.getElementById('resultVideo');
 
   var state = {
     palette: [],
@@ -386,6 +411,35 @@ const indexHTML = `<!doctype html>
     });
   }
 
+  function buildPayload() {
+    return {
+      out: outDir.value.trim(),
+      targetBitrate: targetBitrate.value.trim(),
+      encoder: encoder.value,
+      bitrateWindow: parseFloat(bitrateWindow.value),
+      roiBlockSize: parseInt(blockSize.value, 10),
+      cells: cellsArray()
+    };
+  }
+
+  function postJSON(url, payload) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (text) { throw new Error(text); });
+      }
+      return res.json();
+    });
+  }
+
+  function setRunning(running) {
+    run.disabled = running;
+    confirm.disabled = running;
+  }
+
   function selectTool(entry, button) {
     state.selected = entry;
     state.erasing = false;
@@ -477,29 +531,32 @@ const indexHTML = `<!doctype html>
     state.cells = {};
     draw();
   });
-  document.getElementById('confirm').addEventListener('click', function () {
-    var payload = {
-      out: outDir.value.trim(),
-      targetBitrate: targetBitrate.value.trim(),
-      encoder: encoder.value,
-      bitrateWindow: parseFloat(bitrateWindow.value),
-      roiBlockSize: parseInt(blockSize.value, 10),
-      cells: cellsArray()
-    };
+  confirm.addEventListener('click', function () {
+    var payload = buildPayload();
     setStatus('Saving...');
-    fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    }).then(function (res) {
-      if (!res.ok) {
-        return res.text().then(function (text) { throw new Error(text); });
-      }
-      return res.json();
-    }).then(function (data) {
+    postJSON('/api/config', payload).then(function (data) {
       setStatus('Saved ' + data.rectCount + ' rectangles from ' + data.blockCount + ' blocks. ' + data.command);
     }).catch(function (err) {
       setStatus('Error: ' + err.message);
+    });
+  });
+
+  run.addEventListener('click', function () {
+    var payload = buildPayload();
+    result.classList.add('hidden');
+    resultVideo.removeAttribute('src');
+    resultVideo.load();
+    setRunning(true);
+    setStatus('Запуск обработки... это может занять несколько минут.');
+    postJSON('/api/run', payload).then(function (data) {
+      resultVideo.src = data.resultUrl;
+      result.classList.remove('hidden');
+      resultVideo.load();
+      setStatus('Готово. Итоговый результат сохранен: ' + data.resultPath);
+    }).catch(function (err) {
+      setStatus('Error: ' + err.message);
+    }).finally(function () {
+      setRunning(false);
     });
   });
 

@@ -78,6 +78,7 @@ demo-check:
 	@command -v go >/dev/null 2>&1 || { echo "go is required"; exit 1; }
 	@command -v ffmpeg >/dev/null 2>&1 || { echo "ffmpeg is required"; exit 1; }
 	@command -v ffprobe >/dev/null 2>&1 || { echo "ffprobe is required"; exit 1; }
+	@ffmpeg -hide_banner -encoders 2>/dev/null | grep -qw libx264 || { echo "ffmpeg with libx264 encoder is required"; exit 1; }
 
 demo-assets:
 	@if [ -d .git ] && git lfs version >/dev/null 2>&1; then \
