@@ -109,6 +109,12 @@ func validateConfig(cfg Config) error {
 	if !isSupportedVideoEncoder(normalizeVideoEncoder(cfg.VideoEncoder)) {
 		return fmt.Errorf("--encoder must be %s", supportedVideoEncoderList())
 	}
+	if err := validateROISideDataSupport(cfg); err != nil {
+		return err
+	}
+	if err := validateNVENCSDKConfig(cfg); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.NVENCPreset) == "" {
 		return errors.New("--nvenc-preset must not be empty")
 	}
@@ -117,6 +123,22 @@ func validateConfig(cfg Config) error {
 	}
 	if cfg.BitrateWindow <= 0 {
 		return errors.New("--bitrate-window must be greater than zero")
+	}
+	return nil
+}
+
+func validateNVENCSDKConfig(cfg Config) error {
+	if normalizeVideoEncoder(cfg.VideoEncoder) != encoderNVENCSDK {
+		return nil
+	}
+	if roiControl(cfg) != "qp-map" {
+		return errors.New("--encoder h264_nvenc_sdk requires --roi-control qp-map")
+	}
+	if roiMode(cfg) != "blocks" {
+		return errors.New("--encoder h264_nvenc_sdk requires --mode blocks")
+	}
+	if cfg.FitROI {
+		return errors.New("--encoder h264_nvenc_sdk uses one SDK QP-map encode and does not support --fit-roi; set --fit-roi=false")
 	}
 	return nil
 }

@@ -66,6 +66,7 @@ type Config struct {
 	MaxBitrateOverlays int     `yaml:"max-bitrate-overlays"`
 
 	// Reports and local preview server.
+	Debug   bool `yaml:"debug"`
 	Metrics bool `yaml:"metrics"`
 
 	Serve    bool   `yaml:"serve"`

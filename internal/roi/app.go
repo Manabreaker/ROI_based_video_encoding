@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Run orchestrating probing, ROI rendering, bitrate measurement, comparison rendering, and reports.
+// Run orchestrates probing and ROI rendering. Debug mode also writes bitrate data, comparison media, and reports.
 func Run(cfg Config) error {
 	if usesROIBlockMap(cfg) {
 		cfg.Mode = "blocks"
@@ -26,17 +26,25 @@ func Run(cfg Config) error {
 	if err := ensureTool("ffprobe"); err != nil {
 		return err
 	}
-	resolvedEncoder, err := resolveVideoEncoder(cfg.VideoEncoder)
+	resolvedEncoder, err := resolveConfiguredVideoEncoder(cfg)
 	if err != nil {
 		return err
 	}
 	cfg.VideoEncoder = resolvedEncoder
+	if err := validateROISideDataSupport(cfg); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 
-	fmt.Println("[1/7] Probing input video...")
+	totalSteps := 4
+	if cfg.Debug {
+		totalSteps = 7
+	}
+
+	fmt.Printf("[1/%d] Probing input video...\n", totalSteps)
 
 	info, err := probeVideo(cfg.Input)
 	if err != nil {
@@ -64,7 +72,7 @@ func Run(cfg Config) error {
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 	}
 
-	fmt.Println("[2/7] Selecting ROI...")
+	fmt.Printf("[2/%d] Selecting ROI...\n", totalSteps)
 
 	roiSelection, err := selectROISelection(cfg, info, tmpDir)
 	if err != nil {
@@ -88,7 +96,7 @@ func Run(cfg Config) error {
 	bitrateReportPath := filepath.Join(cfg.OutDir, "bitrate_windows.json")
 	qualityReportPath := filepath.Join(cfg.OutDir, "quality_roi_psnr.json")
 
-	fmt.Println("[3/7] Using input video as baseline reference...")
+	fmt.Printf("[3/%d] Using input video as baseline reference...\n", totalSteps)
 
 	baselineArtifact := artifactFor(baseline)
 
@@ -98,10 +106,12 @@ func Run(cfg Config) error {
 	}
 	fmt.Println()
 
-	if roiControl(cfg) == "qp-map" {
-		fmt.Println("[4/7] Rendering ROI using encoder QP-map side data...")
+	if usesNVENCSDKQPMap(cfg) {
+		fmt.Printf("[4/%d] Rendering ROI with NVIDIA Video Codec SDK Emphasis MAP...\n", totalSteps)
+	} else if roiControl(cfg) == "qp-map" {
+		fmt.Printf("[4/%d] Rendering ROI using encoder QP-map side data...\n", totalSteps)
 	} else {
-		fmt.Println("[4/7] Rendering ROI fitted by changing periphery quality...")
+		fmt.Printf("[4/%d] Rendering ROI fitted by changing periphery quality...\n", totalSteps)
 	}
 
 	roiDecision, err := fitROIToTarget(cfg, info, roiSelection, targetKbps, roiVideo, filepath.Join(tmpDir, "roi_fit"))
@@ -110,7 +120,14 @@ func Run(cfg Config) error {
 	}
 
 	if roiDecision.ROIControl == "qp-map" {
-		if roiDecision.ROIBlockCount > 0 {
+		if roiDecision.Encoder == encoderNVENCSDK {
+			fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, %d SDK emphasis-map blocks at %d px grid\n",
+				roiDecision.TargetKbps,
+				roiDecision.ActualKbps,
+				roiDecision.ROIBlockCount,
+				roiDecision.ROIBlockSize,
+			)
+		} else if roiDecision.ROIBlockCount > 0 {
 			fmt.Printf("      ROI: target %.1f kbps, actual %.1f kbps, ROI CRF %d, %d QP blocks at %d px grid\n",
 				roiDecision.TargetKbps,
 				roiDecision.ActualKbps,
@@ -148,7 +165,13 @@ func Run(cfg Config) error {
 		roiDecision.ActualKbps = roiArtifact.BitrateKbps
 	}
 
-	fmt.Println("[5/7] Calculating bitrate windows from encoded packets...")
+	if !cfg.Debug {
+		fmt.Println("\nDone. Artifacts:")
+		fmt.Printf("  - %s\n", roiVideo)
+		return nil
+	}
+
+	fmt.Printf("[5/%d] Calculating bitrate windows from encoded packets...\n", totalSteps)
 
 	baselineInfo, err := probeVideo(baseline)
 	if err != nil {
@@ -192,7 +215,7 @@ func Run(cfg Config) error {
 		bitrateReport.Summary.ROI.P95Kbps,
 	)
 
-	fmt.Println("[6/7] Rendering side-by-side comparison...")
+	fmt.Printf("[6/%d] Rendering side-by-side comparison...\n", totalSteps)
 
 	if err := renderComparison(
 		cfg,
@@ -212,7 +235,7 @@ func Run(cfg Config) error {
 		return err
 	}
 
-	fmt.Println("[7/7] Calculating ROI quality metrics and writing report...")
+	fmt.Printf("[7/%d] Calculating ROI quality metrics and writing report...\n", totalSteps)
 
 	qualityMetricsWritten := false
 	if cfg.Metrics {
@@ -247,16 +270,22 @@ func Run(cfg Config) error {
 		)
 	}
 	if roiDecision.ROIControl == "qp-map" {
-		if roiDecision.ROIBlockCount > 0 {
+		if roiDecision.Encoder == encoderNVENCSDK {
+			notes = append(notes,
+				"ROI output uses NVIDIA Video Codec SDK Emphasis MAP through the native h264_nvenc_sdk helper.",
+				"Block QP-map mode derives the report ROI from the bounding box of configured block cells, while each negative qoffset maps to an NVENC emphasis level.",
+				"No FFmpeg addroi side data, mask preprocessing, blur fallback, or candidate fitting is used in this path.",
+			)
+		} else if roiDecision.ROIBlockCount > 0 {
 			notes = append(notes,
 				"ROI output uses FFmpeg addroi side data to request per-block encoder-level QP offsets.",
 				"Block QP-map mode derives the report ROI from the bounding box of configured block cells, while each block keeps its own qoffset.",
-				"QP-map support is encoder-dependent; libx264 enables adaptive quantization, NVENC enables spatial AQ, and other hardware backends may ignore ROI side data.",
+				"QP-map support is encoder-dependent; libx264 consumes this path, while FFmpeg hardware encoders are rejected for QP-map ROI.",
 			)
 		} else {
 			notes = append(notes,
 				"ROI output uses FFmpeg addroi side data to request encoder-level QP offsets for the selected ROI and middle ring.",
-				"QP-map support is encoder-dependent; libx264 enables adaptive quantization, NVENC enables spatial AQ, and other hardware backends may ignore ROI side data.",
+				"QP-map support is encoder-dependent; libx264 consumes this path, while FFmpeg hardware encoders are rejected for QP-map ROI.",
 			)
 		}
 	} else {

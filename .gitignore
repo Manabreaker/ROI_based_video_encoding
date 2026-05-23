@@ -8,6 +8,8 @@
 # Demonstration exclude paths
 demo_out
 config/roi_blocks_generated.yaml
+native/roi-nvenc/roi-nvenc
+native/roi-nvenc/roi-nvenc.exe
 
 # Nextcloud exclude paths
 nextcloud

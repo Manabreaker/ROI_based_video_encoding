@@ -122,6 +122,7 @@ func WriteConfig(path string, opts Options, req ConfigRequest, blocks []roi.QPMa
 		ROIBlockSize:   req.ROIBlockSize,
 		ROIBlocks:      blocks,
 		TargetBitrate:  strings.TrimSpace(req.TargetBitrate),
+		FitROI:         false,
 		ROIRateControl: "abr",
 		ROITwoPass:     false,
 		Encoder:        strings.TrimSpace(req.Encoder),
@@ -129,6 +130,7 @@ func WriteConfig(path string, opts Options, req ConfigRequest, blocks []roi.QPMa
 		NVENCPreset:    opts.NVENCPreset,
 		BitrateWindow:  req.BitrateWindow,
 		OverlayBitrate: true,
+		Debug:          false,
 		Metrics:        false,
 		Serve:          true,
 	}

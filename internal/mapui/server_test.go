@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,43 @@ func TestServerMeta(t *testing.T) {
 	if meta.Input == "" || meta.ConfigOut == "" || len(meta.Palette) != len(Palette) {
 		t.Fatalf("unexpected meta: %+v", meta)
 	}
+	if cacheControl := rec.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("meta Cache-Control = %q, want no-store", cacheControl)
+	}
+	if !strings.HasPrefix(meta.VideoURL, "/video?v=") {
+		t.Fatalf("meta video URL = %q, want cache-busted /video URL", meta.VideoURL)
+	}
+	decodedKey, err := url.QueryUnescape(strings.TrimPrefix(meta.VideoURL, "/video?v="))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(decodedKey, server.inputPath) {
+		t.Fatalf("meta video URL cache key %q does not include input path %q", decodedKey, server.inputPath)
+	}
+}
+
+func TestIndexHTMLLoadsVideoFromMetaURL(t *testing.T) {
+	if strings.Contains(indexHTML, `src="/video"`) {
+		t.Fatal("index HTML must not hard-code /video as the video source")
+	}
+	if !strings.Contains(indexHTML, "video.src = meta.videoUrl || '/video';") {
+		t.Fatal("index HTML must set the video source from /api/meta")
+	}
+}
+
+func TestServerIndexDisablesCaching(t *testing.T) {
+	server := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if cacheControl := rec.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("index Cache-Control = %q, want no-store", cacheControl)
+	}
 }
 
 func TestServerConfigWritesYAML(t *testing.T) {
@@ -38,7 +76,7 @@ func TestServerConfigWritesYAML(t *testing.T) {
 	body := ConfigRequest{
 		OutDir:        "out/generated",
 		TargetBitrate: "500k",
-		Encoder:       "auto",
+		Encoder:       "libx264",
 		BitrateWindow: 2,
 		ROIBlockSize:  64,
 		Cells: []PaintCell{
@@ -67,6 +105,9 @@ func TestServerConfigWritesYAML(t *testing.T) {
 	if !strings.Contains(string(data), "mode: blocks") || !strings.Contains(string(data), "qoffset: -0.4") {
 		t.Fatalf("unexpected YAML:\n%s", string(data))
 	}
+	if !strings.Contains(string(data), "fit-roi: false") {
+		t.Fatalf("generated YAML must disable fit-roi for single-pass block QP-map encoders:\n%s", string(data))
+	}
 }
 
 func TestServerConfigRejectsInvalidBlocksAndEmptyMap(t *testing.T) {
@@ -75,7 +116,7 @@ func TestServerConfigRejectsInvalidBlocksAndEmptyMap(t *testing.T) {
 	empty := ConfigRequest{
 		OutDir:        "out/generated",
 		TargetBitrate: "500k",
-		Encoder:       "auto",
+		Encoder:       "libx264",
 		BitrateWindow: 2,
 		ROIBlockSize:  64,
 	}
@@ -94,7 +135,7 @@ func TestServerConfigRejectsInvalidBlocksAndEmptyMap(t *testing.T) {
 
 func TestServerVideoSupportsGet(t *testing.T) {
 	server := newTestServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/video", nil)
+	req := httptest.NewRequest(http.MethodGet, "/video?v=changed-input", nil)
 	rec := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(rec, req)
@@ -104,6 +145,9 @@ func TestServerVideoSupportsGet(t *testing.T) {
 	}
 	if rec.Body.String() != "video" {
 		t.Fatalf("video body = %q", rec.Body.String())
+	}
+	if cacheControl := rec.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("Cache-Control = %q, want no-store", cacheControl)
 	}
 }
 
@@ -125,7 +169,7 @@ func TestServerRunProcessesAndServesFinalResult(t *testing.T) {
 	body := ConfigRequest{
 		OutDir:        outDir,
 		TargetBitrate: "500k",
-		Encoder:       "auto",
+		Encoder:       "libx264",
 		BitrateWindow: 2,
 		ROIBlockSize:  64,
 		Cells: []PaintCell{

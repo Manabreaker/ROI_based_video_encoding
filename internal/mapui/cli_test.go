@@ -33,6 +33,9 @@ func TestParseArgsDefaultsAndNoOpen(t *testing.T) {
 	if opts.ROIBlockSize != defaultROIBlockSize {
 		t.Fatalf("ROIBlockSize = %d", opts.ROIBlockSize)
 	}
+	if opts.Encoder != "libx264" {
+		t.Fatalf("Encoder = %q, want libx264", opts.Encoder)
+	}
 }
 
 func TestValidateOptionsRejectsNonLocalAddress(t *testing.T) {
@@ -48,7 +51,7 @@ func TestValidateOptionsRejectsNonLocalAddress(t *testing.T) {
 	}
 }
 
-func TestValidateOptionsAcceptsHardwareEncoders(t *testing.T) {
+func TestValidateOptionsRejectsHardwareEncodersForQPMapUI(t *testing.T) {
 	video := filepath.Join(t.TempDir(), "video.mp4")
 	writeTestFile(t, video)
 
@@ -56,8 +59,21 @@ func TestValidateOptionsAcceptsHardwareEncoders(t *testing.T) {
 		opts := DefaultOptions()
 		opts.Input = video
 		opts.Encoder = encoder
-		if err := ValidateOptions(opts); err != nil {
-			t.Fatalf("ValidateOptions rejected %s: %v", encoder, err)
+		if err := ValidateOptions(opts); err == nil {
+			t.Fatalf("ValidateOptions accepted %s for QP-map UI", encoder)
 		}
+	}
+}
+
+func TestValidateOptionsAcceptsNVENCSDKForQPMapUI(t *testing.T) {
+	video := filepath.Join(t.TempDir(), "video.mp4")
+	writeTestFile(t, video)
+
+	opts := DefaultOptions()
+	opts.Input = video
+	opts.Encoder = "h264_nvenc_sdk"
+
+	if err := ValidateOptions(opts); err != nil {
+		t.Fatalf("ValidateOptions rejected h264_nvenc_sdk: %v", err)
 	}
 }

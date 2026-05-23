@@ -1,0 +1,63 @@
+input: examples/Porsche_Road_Cinematic.mp4
+out: out/quickstart_ui
+mode: blocks
+roi-control: qp-map
+roi-block-size: 64
+roi-blocks:
+    - col: 0
+      row: 0
+      w: 10
+      h: 1
+      qoffset: -0.1
+    - col: 0
+      row: 1
+      w: 1
+      h: 5
+      qoffset: -0.1
+    - col: 1
+      row: 1
+      w: 1
+      h: 4
+      qoffset: -0.25
+    - col: 2
+      row: 1
+      w: 7
+      h: 3
+      qoffset: -0.4
+    - col: 9
+      row: 1
+      w: 1
+      h: 5
+      qoffset: -0.25
+    - col: 2
+      row: 4
+      w: 1
+      h: 2
+      qoffset: -0.25
+    - col: 3
+      row: 4
+      w: 6
+      h: 1
+      qoffset: -0.4
+    - col: 1
+      row: 5
+      w: 1
+      h: 1
+      qoffset: -0.1
+    - col: 3
+      row: 5
+      w: 6
+      h: 1
+      qoffset: -0.25
+target-bitrate: 500k
+fit-roi: false
+roi-rate-control: abr
+roi-two-pass: false
+encoder: h264_nvenc_sdk
+preset: veryfast
+nvenc-preset: p4
+bitrate-window: 2
+overlay-bitrate: true
+debug: false
+metrics: false
+serve: true

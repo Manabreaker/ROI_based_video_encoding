@@ -29,6 +29,35 @@ func TestEncoderListedMatchesStandaloneToken(t *testing.T) {
 	}
 }
 
+func TestNVENCSDKEncoderIsSupportedButNotAutoCandidate(t *testing.T) {
+	if !IsSupportedVideoEncoder("h264_nvenc_sdk") {
+		t.Fatal("h264_nvenc_sdk should be a supported explicit encoder")
+	}
+
+	for _, candidate := range autoVideoEncoderCandidates() {
+		if candidate == "h264_nvenc_sdk" {
+			t.Fatal("h264_nvenc_sdk should not be selected automatically")
+		}
+	}
+}
+
+func TestResolveConfiguredVideoEncoderUsesX264ForAutoQPMap(t *testing.T) {
+	if !ffmpegHasEncoder(encoderX264) {
+		t.Skip("ffmpeg libx264 encoder is not available")
+	}
+
+	got, err := resolveConfiguredVideoEncoder(Config{
+		VideoEncoder: encoderAuto,
+		ROIControl:   "qp-map",
+	})
+	if err != nil {
+		t.Fatalf("resolveConfiguredVideoEncoder returned error: %v", err)
+	}
+	if got != encoderX264 {
+		t.Fatalf("resolveConfiguredVideoEncoder = %q, want %q", got, encoderX264)
+	}
+}
+
 func TestQualityEncoderArgs(t *testing.T) {
 	tests := []struct {
 		name string

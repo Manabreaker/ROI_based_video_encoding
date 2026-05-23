@@ -59,6 +59,7 @@ type runResponse struct {
 
 type metaResponse struct {
 	Input         string         `json:"input"`
+	VideoURL      string         `json:"videoUrl"`
 	ConfigOut     string         `json:"configOut"`
 	OutDir        string         `json:"out"`
 	TargetBitrate string         `json:"targetBitrate"`
@@ -78,6 +79,7 @@ type generatedConfig struct {
 	ROIBlockSize   int              `yaml:"roi-block-size"`
 	ROIBlocks      []roi.QPMapBlock `yaml:"roi-blocks"`
 	TargetBitrate  string           `yaml:"target-bitrate"`
+	FitROI         bool             `yaml:"fit-roi"`
 	ROIRateControl string           `yaml:"roi-rate-control"`
 	ROITwoPass     bool             `yaml:"roi-two-pass"`
 	Encoder        string           `yaml:"encoder"`
@@ -85,6 +87,7 @@ type generatedConfig struct {
 	NVENCPreset    string           `yaml:"nvenc-preset"`
 	BitrateWindow  float64          `yaml:"bitrate-window"`
 	OverlayBitrate bool             `yaml:"overlay-bitrate"`
+	Debug          bool             `yaml:"debug"`
 	Metrics        bool             `yaml:"metrics"`
 	Serve          bool             `yaml:"serve"`
 }
