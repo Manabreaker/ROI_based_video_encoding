@@ -193,7 +193,7 @@ const indexHTML = `<!doctype html>
 <main>
   <section class="stage">
     <div class="video-box">
-      <video id="video" src="/video" muted playsinline preload="metadata"></video>
+      <video id="video" muted playsinline preload="metadata"></video>
       <canvas id="overlay"></canvas>
     </div>
     <div class="transport">
@@ -220,11 +220,8 @@ const indexHTML = `<!doctype html>
       <div class="field">
         <label for="encoder">Encoder</label>
         <select id="encoder">
-          <option value="auto">auto</option>
           <option value="libx264">libx264</option>
-          <option value="h264_nvenc">h264_nvenc</option>
-          <option value="h264_amf">h264_amf</option>
-          <option value="h264_videotoolbox">h264_videotoolbox</option>
+          <option value="h264_nvenc_sdk">h264_nvenc_sdk</option>
         </select>
       </div>
     </div>
@@ -563,6 +560,8 @@ const indexHTML = `<!doctype html>
   fetch('/api/meta').then(function (res) {
     return res.json();
   }).then(function (meta) {
+    video.src = meta.videoUrl || '/video';
+    video.load();
     inputPath.value = meta.input;
     outDir.value = meta.out;
     targetBitrate.value = meta.targetBitrate;

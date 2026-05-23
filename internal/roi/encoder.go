@@ -14,6 +14,7 @@ const (
 	encoderAuto             = "auto"
 	encoderX264             = "libx264"
 	encoderNVENC            = "h264_nvenc"
+	encoderNVENCSDK         = "h264_nvenc_sdk"
 	encoderAMF              = "h264_amf"
 	encoderVideoToolbox     = "h264_videotoolbox"
 	videoToolboxQualityKbps = "8000k"
@@ -23,8 +24,24 @@ var supportedVideoEncoders = []string{
 	encoderAuto,
 	encoderX264,
 	encoderNVENC,
+	encoderNVENCSDK,
 	encoderAMF,
 	encoderVideoToolbox,
+}
+
+// resolveConfiguredVideoEncoder resolves auto using the full ROI config.
+func resolveConfiguredVideoEncoder(cfg Config) (string, error) {
+	requested := normalizeVideoEncoder(cfg.VideoEncoder)
+	if requested == "" || requested == encoderAuto {
+		if roiControl(cfg) == "qp-map" {
+			if ffmpegHasEncoder(encoderX264) {
+				return encoderX264, nil
+			}
+			return "", fmt.Errorf("--encoder auto with --roi-control qp-map requires FFmpeg encoder %s; install libx264 support or set --encoder h264_nvenc_sdk with --mode blocks", encoderX264)
+		}
+	}
+
+	return resolveVideoEncoder(requested)
 }
 
 // resolveVideoEncoder picks a hardware encoder in auto mode when FFmpeg advertises one.
@@ -42,7 +59,7 @@ func resolveVideoEncoder(requested string) (string, error) {
 	if !isSupportedVideoEncoder(encoder) {
 		return "", fmt.Errorf("--encoder must be %s", supportedVideoEncoderList())
 	}
-	if isHardwareVideoEncoderName(encoder) && !ffmpegHasEncoder(encoder) {
+	if isFFmpegHardwareVideoEncoderName(encoder) && !ffmpegHasEncoder(encoder) {
 		return "", fmt.Errorf("--encoder %s was requested, but ffmpeg does not list %s", encoder, encoder)
 	}
 
@@ -226,6 +243,15 @@ func isHardwareVideoEncoder(cfg Config) bool {
 }
 
 func isHardwareVideoEncoderName(encoder string) bool {
+	switch encoder {
+	case encoderNVENC, encoderNVENCSDK, encoderAMF, encoderVideoToolbox:
+		return true
+	default:
+		return false
+	}
+}
+
+func isFFmpegHardwareVideoEncoderName(encoder string) bool {
 	switch encoder {
 	case encoderNVENC, encoderAMF, encoderVideoToolbox:
 		return true

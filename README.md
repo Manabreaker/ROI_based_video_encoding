@@ -1,18 +1,22 @@
 # ROI_based_video_encoding
 
-CLI на Go для демонстрации ROI-based video encoding. Программа берет входное видео как baseline, создает ROI-вариант с повышенным качеством выбранной области и сохраняет side-by-side comparison, preview и JSON-отчеты.
+CLI на Go для демонстрации ROI-based video encoding. Программа берет входное видео как baseline и создает ROI-вариант с повышенным качеством выбранной области. По умолчанию сохраняется только итоговое видео; side-by-side comparison, preview и JSON-отчеты включаются флагом `--debug=true`.
 
-Важно: это PoC на базе FFmpeg preprocessing, а не encoder-level ROI через QP-map. ROI сохраняется лучше за счет маски качества: выбранная область берется из исходного кадра, вокруг нее добавляется средняя зона, а периферия упрощается перед финальным H.264-кодированием.
+Поддерживается два принципиально разных ROI-пути:
+
+- `roi-control: mask` упрощает периферию до кодирования через FFmpeg preprocessing.
+- `roi-control: qp-map` использует encoder-level QP/ROI map. Для `libx264` это FFmpeg `addroi`; для NVIDIA добавлен отдельный `h264_nvenc_sdk` backend через NVIDIA Video Codec SDK Emphasis MAP.
 
 Проект не требует реализации потоковой передачи видео. Основной результат - воспроизводимое кодирование видеофайла или другого FFmpeg-readable input в локальные output-артефакты.
 
-Общее описание проекта, архитектуры и ограничений находится в [docs/overview.md](docs/overview.md).
+Для быстрой проверки преподавателем используйте [quickstart.md](quickstart.md). Общее описание проекта, архитектуры и ограничений находится в [docs/overview.md](docs/overview.md).
 
 ## Требования
 
 - Go 1.26 или совместимая версия, доступная в `PATH`;
 - FFmpeg и FFprobe;
 - Git LFS;
+- для `encoder: h264_nvenc_sdk`: NVIDIA driver с доступными `libcuda.so.1` и `libnvidia-encode.so.1`;
 - Docker, если нужен запуск без локальной установки Go/FFmpeg.
 
 Проверка окружения:
@@ -28,6 +32,18 @@ git lfs --version
 
 ```bash
 git lfs pull
+```
+
+Нативный NVENC SDK helper собирается отдельно:
+
+```bash
+make roi-nvenc
+```
+
+Быстрая проверка ROI-map math без GPU:
+
+```bash
+make test-native
 ```
 
 ## Быстрый запуск
@@ -52,10 +68,10 @@ go build -o roi-poc ./cmd/roi
   --encoder libx264
 ```
 
-Главный файл для просмотра результата:
+Главный файл результата:
 
 ```text
-out/ball_roi/comparison_baseline_vs_roi.mp4
+out/ball_roi/roi_high_quality_region.mp4
 ```
 
 ## Запуск через YAML config
@@ -89,15 +105,20 @@ fit-iterations: 5
 Если значение указано и в YAML, и во флагах, побеждает флаг:
 
 ```bash
-./roi-poc --config roi.yaml --target-bitrate 800k --metrics=true
+./roi-poc --config roi.yaml --target-bitrate 800k --debug=true --metrics=true
 ```
 
 ## Что появится в output-директории
 
-После успешного запуска в `--out` создаются:
+Обычный запуск создает только итоговое видео:
 
 ```text
 roi_high_quality_region.mp4
+```
+
+При `--debug=true` дополнительно создаются диагностические артефакты:
+
+```text
 comparison_baseline_vs_roi.mp4
 roi_preview.png
 bitrate_windows.json
@@ -173,6 +194,7 @@ CV ROI через встроенную модель:
   --input examples/ball.mp4 \
   --out out/demo \
   --mode static \
+  --debug=true \
   --serve
 ```
 
@@ -219,41 +241,65 @@ Fixed-quality режим:
 --blur 2
 ```
 
-При `--metrics=true` программа считает ROI-crop PSNR через FFmpeg `psnr` filter и пишет `quality_roi_psnr.json`.
+## NVIDIA NVENC SDK QP-map
+
+Обычный FFmpeg encoder `h264_nvenc` не используется для ROI QP-map: FFmpeg не передает ему NVIDIA Emphasis MAP. Для реального NVENC ROI используйте отдельный encoder:
+
+```yaml
+encoder: h264_nvenc_sdk
+roi-control: qp-map
+mode: blocks
+fit-roi: false
+roi-rate-control: abr
+roi-two-pass: false
+```
+
+Пример запуска с готовым block-map config:
+
+```bash
+make roi-nvenc
+go build -o roi-poc ./cmd/roi
+./roi-poc config/roi_blocks_generated.yaml --encoder h264_nvenc_sdk --fit-roi=false
+```
+
+В этом пути Go декодирует вход в NV12 через FFmpeg, native helper кодирует H.264 через NVIDIA Video Codec SDK, а затем Go mux-ит Annex B H.264 в MP4. Blur/mask fallback и candidate fitting в этом пути не используются. Если запустить с `--debug=true`, в отчете будет указано `NVIDIA Video Codec SDK Emphasis MAP`.
+
+При `--debug=true --metrics=true` программа считает ROI-crop PSNR через FFmpeg `psnr` filter и пишет `quality_roi_psnr.json`.
 
 ## Важные флаги
 
-| Флаг                   | По умолчанию | Назначение                                                          |
-|------------------------|--------------|---------------------------------------------------------------------|
-| `--input`              | -            | входной видеофайл, URL, RTSP или другой FFmpeg-readable source      |
-| `--config`             | -            | YAML config; явно переданные флаги имеют приоритет                  |
-| `--out`                | `out`        | директория для результата                                           |
-| `--mode`               | `static`     | режим ROI: `static`, `motion`, `cv` или `blocks`                    |
-| `--roi`                | -            | ROI как `x,y,w,h`, в пикселях или долях кадра                       |
+| Флаг                   | По умолчанию      | Назначение                                                              |
+|------------------------|-------------------|-------------------------------------------------------------------------|
+| `--input`              | -                 | входной видеофайл, URL, RTSP или другой FFmpeg-readable source          |
+| `--config`             | -                 | YAML config; явно переданные флаги имеют приоритет                      |
+| `--out`                | `out`             | директория для результата                                               |
+| `--mode`               | `static`          | режим ROI: `static`, `motion`, `cv` или `blocks`                        |
+| `--roi`                | -                 | ROI как `x,y,w,h`, в пикселях или долях кадра                           |
 | `--cv-model`           | `pigo-facefinder` | CV model для `--mode cv`: встроенная Pigo facefinder или path к cascade |
-| `--cv-samples`         | `12`         | сколько tracking keyframes проверить CV-моделью                     |
-| `--cv-min-score`       | `5`          | минимальный score detection для `--mode cv`                         |
-| `--cv-frame-width`     | `960`        | ширина кадров для CV inference; `0` оставляет исходную ширину       |
-| `--roi-block-size`     | `64`         | размер блока для `--mode blocks`                                    |
-| `--roi-blocks`         | -            | QP-map блоки: `col,row,qoffset` или `col,row,w,h,qoffset`           |
-| `--target-bitrate`     | `1000k`      | целевой bitrate для ROI output                                      |
-| `--roi-control`        | `qp-map`     | `qp-map` или старый `mask` preprocessing                            |
-| `--roi-qoffset`        | `-0.30`      | QP offset для основной ROI в `qp-map` режиме                        |
-| `--roi-middle-qoffset` | `-0.10`      | QP offset для middle ring в `qp-map` режиме                         |
-| `--fit-roi`            | `true`       | подбирать параметры периферии около target bitrate                  |
-| `--roi-rate-control`   | `abr`        | `abr` или `crf`                                                     |
-| `--roi-crf`            | `16`         | CRF для ROI output в fixed-quality режиме                           |
-| `--middle-margin`      | `0.35`       | расширение оранжевой middle-zone вокруг ROI                         |
-| `--middle-scale`       | `0.67`       | scale для middle-zone перед обратным upscale                        |
-| `--middle-blur`        | `1`          | blur для middle-zone                                                |
-| `--periphery-scale`    | `0.35`       | scale периферии при `--fit-roi=false`                               |
-| `--blur`               | `2`          | blur периферии при `--fit-roi=false`                                |
-| `--encoder`            | `auto`       | `auto`, `libx264`, `h264_nvenc`, `h264_amf` или `h264_videotoolbox` |
-| `--overlay-bitrate`    | `true`       | рисовать текущий bitrate на comparison-видео                        |
-| `--bitrate-window`     | `1.0`        | размер окна bitrate в секундах                                      |
-| `--metrics`            | `true`       | считать ROI PSNR report                                             |
-| `--serve`              | `false`      | поднять локальный HTTP file server после обработки                  |
-| `--fit-iterations`     | `9`          | максимум probe-ов interpolation search для ROI fitting              |
+| `--cv-samples`         | `12`              | сколько tracking keyframes проверить CV-моделью                         |
+| `--cv-min-score`       | `5`               | минимальный score detection для `--mode cv`                             |
+| `--cv-frame-width`     | `960`             | ширина кадров для CV inference; `0` оставляет исходную ширину           |
+| `--roi-block-size`     | `64`              | размер блока для `--mode blocks`                                        |
+| `--roi-blocks`         | -                 | QP-map блоки: `col,row,qoffset` или `col,row,w,h,qoffset`               |
+| `--target-bitrate`     | `1000k`           | целевой bitrate для ROI output                                          |
+| `--roi-control`        | `qp-map`          | `qp-map` или старый `mask` preprocessing                                |
+| `--roi-qoffset`        | `-0.30`           | QP offset для основной ROI в `qp-map` режиме                            |
+| `--roi-middle-qoffset` | `-0.10`           | QP offset для middle ring в `qp-map` режиме                             |
+| `--fit-roi`            | `true`            | подбирать параметры периферии около target bitrate                      |
+| `--roi-rate-control`   | `abr`             | `abr` или `crf`                                                         |
+| `--roi-crf`            | `16`              | CRF для ROI output в fixed-quality режиме                               |
+| `--middle-margin`      | `0.35`            | расширение оранжевой middle-zone вокруг ROI                             |
+| `--middle-scale`       | `0.67`            | scale для middle-zone перед обратным upscale                            |
+| `--middle-blur`        | `1`               | blur для middle-zone                                                    |
+| `--periphery-scale`    | `0.35`            | scale периферии при `--fit-roi=false`                                   |
+| `--blur`               | `2`               | blur периферии при `--fit-roi=false`                                    |
+| `--encoder`            | `auto`            | `auto`, `libx264`, `h264_nvenc_sdk`, `h264_nvenc`, `h264_amf` или `h264_videotoolbox` |
+| `--overlay-bitrate`    | `true`            | рисовать текущий bitrate на comparison-видео                            |
+| `--bitrate-window`     | `1.0`             | размер окна bitrate в секундах                                          |
+| `--debug`              | `false`           | писать comparison, preview, bitrate windows, reports, metrics и serve   |
+| `--metrics`            | `true`            | считать ROI PSNR report при `--debug=true`                              |
+| `--serve`              | `false`           | поднять локальный HTTP file server после обработки при `--debug=true`   |
+| `--fit-iterations`     | `9`               | максимум probe-ов interpolation search для ROI fitting                  |
 
 Полный список флагов можно посмотреть через:
 
@@ -272,11 +318,13 @@ Fixed-quality режим:
 Поведение:
 
 - `auto` проверяет `ffmpeg -hide_banner -encoders`;
+- для `--roi-control qp-map` автоматически используется `libx264`, потому что FFmpeg hardware encoders не потребляют ROI side data;
 - на macOS при наличии `h264_videotoolbox` используется VideoToolbox;
 - иначе при наличии `h264_nvenc` используется NVIDIA NVENC;
 - иначе при наличии `h264_amf` используется AMD AMF;
 - если аппаратный H.264 энкодер недоступен, используется `libx264`;
 - `--encoder libx264` принудительно включает CPU encoding;
+- `--encoder h264_nvenc_sdk` явно включает NVIDIA Video Codec SDK Emphasis MAP для блочной ROI;
 - `--encoder h264_nvenc`, `--encoder h264_amf` и `--encoder h264_videotoolbox` завершатся ошибкой, если FFmpeg не поддерживает выбранный энкодер.
 
 NVENC preset задается так:
@@ -386,7 +434,7 @@ go build -o roi-map-ui ./cmd/roi-map-ui
   --out out/ui_example \
   --target-bitrate 10000k \
   --bitrate-window 2 \
-  --encoder auto
+  --encoder libx264
 ```
 
 В браузере разметьте ROI-блоки и нажмите `Запустить`. UI сам сохранит YAML-конфиг, положит копию `roi_blocks_config.yaml` в output-директорию, запустит обработку и после завершения покажет итоговый `roi_high_quality_region.mp4` прямо на странице. Кнопка `Save` остается для случая, когда нужно только сохранить конфиг и запустить `roi` вручную.

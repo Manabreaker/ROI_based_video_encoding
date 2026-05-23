@@ -26,11 +26,11 @@ ROI_based_video_encoding - учебный PoC, который демонстри
 - ROI можно задать вручную, блоками, простой motion-эвристикой или встроенной CV-моделью для лиц;
 - вокруг прямоугольной ROI создается middle ring с более мягким QP offset;
 - старый mask-based режим с downscale/upscale и blur периферии доступен через `--roi-control mask`;
-- результат кодируется в H.264 через `libx264`, `h264_nvenc`, `h264_amf` или `h264_videotoolbox`;
-- сравнение сохраняется как side-by-side видео с bitrate overlay;
-- отчеты пишутся в JSON.
+- результат кодируется в H.264 через `libx264`, `h264_nvenc_sdk`, `h264_nvenc`, `h264_amf` или `h264_videotoolbox`;
+- обычный запуск сохраняет только итоговое ROI-видео;
+- при `--debug=true` сохраняются side-by-side comparison с bitrate overlay, preview и JSON-отчеты.
 
-Это не production streaming stack: нет доставки потока, realtime per-frame tracking и codec-specific QP map API. Но основной PoC теперь использует FFmpeg `addroi` как encoder-level ROI/QP-map подсказку, а результат сохраняется как локальные output-файлы.
+Это не production streaming stack: нет доставки потока и realtime per-frame tracking. Основной PoC использует encoder-level ROI/QP-map подсказки: FFmpeg `addroi` для `libx264` и NVIDIA Video Codec SDK Emphasis MAP для `h264_nvenc_sdk`.
 
 ## Pipeline
 
@@ -43,12 +43,14 @@ flowchart TD
     C --> D["resolve video encoder"]
     D --> E["probe input video"]
     E --> F["select ROI"]
-    F --> G["fit ROI output to target bitrate"]
-    G --> H["compute bitrate windows"]
-    H --> I["render comparison video"]
-    I --> J["render ROI preview"]
-    J --> K["compute optional ROI PSNR"]
-    K --> L["write JSON reports"]
+    F --> G["encode ROI output"]
+    G --> H{"debug enabled?"}
+    H -->|yes| I["compute bitrate windows"]
+    I --> J["render comparison video"]
+    J --> K["render ROI preview"]
+    K --> L["compute optional ROI PSNR"]
+    L --> M["write JSON reports"]
+    H -->|no| N["finish with ROI output only"]
 ```
 
 ## Как формируется ROI output
@@ -114,14 +116,19 @@ CLI можно настроить через YAML-файл:
 ./roi-poc --config roi.yaml
 ```
 
-YAML-файл также можно передать как позиционный `.yaml`/`.yml` аргумент. Ключи YAML совпадают с именами CLI-флагов без `--`, например `target-bitrate`, `fit-roi`, `periphery-scale`, `metrics`. Порядок применения конфигурации: дефолты, затем YAML, затем явно переданные флаги.
+YAML-файл также можно передать как позиционный `.yaml`/`.yml` аргумент. Ключи YAML совпадают с именами CLI-флагов без `--`, например `target-bitrate`, `fit-roi`, `periphery-scale`, `debug`, `metrics`. Порядок применения конфигурации: дефолты, затем YAML, затем явно переданные флаги.
 
 ## Артефакты
 
-Типичный запуск создает:
+Обычный запуск создает только итоговое видео:
 
 ```text
 roi_high_quality_region.mp4
+```
+
+При `--debug=true` дополнительно создаются диагностические артефакты:
+
+```text
 comparison_baseline_vs_roi.mp4
 roi_preview.png
 bitrate_windows.json
@@ -132,11 +139,11 @@ quality_roi_psnr.json
 Назначение:
 
 - `roi_high_quality_region.mp4` - итоговый ROI output;
-- `comparison_baseline_vs_roi.mp4` - визуальное сравнение input baseline и ROI output;
-- `roi_preview.png` - preview выбранной ROI;
-- `bitrate_windows.json` - bitrate по временным окнам;
-- `report.json` - сводка запуска, параметров и артефактов;
-- `quality_roi_psnr.json` - optional PSNR report, если включены метрики.
+- `comparison_baseline_vs_roi.mp4` - визуальное сравнение input baseline и ROI output, только при `--debug=true`;
+- `roi_preview.png` - preview выбранной ROI, только при `--debug=true`;
+- `bitrate_windows.json` - bitrate по временным окнам, только при `--debug=true`;
+- `report.json` - сводка запуска, параметров и артефактов, только при `--debug=true`;
+- `quality_roi_psnr.json` - optional PSNR report, если включены `--debug=true --metrics=true`.
 
 ## Структура кода
 
@@ -197,12 +204,13 @@ Docker нужен не для алгоритма, а для воспроизво
 
 ## Про структуру README
 
-Здесь используется паттерн с одним `README.md`: корневой файл работает как quickstart и точка входа, а обзор вынесен в явно названный `docs/overview.md`.
+Корневой `README.md` работает как общая точка входа, `quickstart.md` содержит короткий проверочный сценарий для сдачи, а обзор вынесен в явно названный `docs/overview.md`.
 
 Структура:
 
 ```text
-README.md          # quickstart и точка входа
+README.md          # общая точка входа
+quickstart.md      # команды проверки и ожидаемые результаты
 docs/overview.md   # общий обзор проекта
 docs/research.md
 docs/TZ.md

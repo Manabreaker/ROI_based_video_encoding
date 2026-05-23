@@ -70,9 +70,20 @@ func TestValidateConfigAcceptsHardwareEncoders(t *testing.T) {
 	for _, encoder := range []string{"h264_nvenc", "h264_amf", "h264_videotoolbox"} {
 		cfg := validTestConfig()
 		cfg.VideoEncoder = encoder
+		cfg.ROIControl = "mask"
 		if err := validateConfig(cfg); err != nil {
 			t.Fatalf("validateConfig rejected %s: %v", encoder, err)
 		}
+	}
+}
+
+func TestValidateConfigRejectsQPMapWithUnsupportedHardwareEncoder(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.VideoEncoder = "h264_nvenc"
+	cfg.ROIControl = "qp-map"
+
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("expected qp-map hardware encoder error")
 	}
 }
 
@@ -110,6 +121,31 @@ func TestValidateConfigAcceptsBlockROI(t *testing.T) {
 
 	if err := validateConfig(cfg); err != nil {
 		t.Fatalf("validateConfig returned error: %v", err)
+	}
+}
+
+func TestValidateConfigAcceptsNVENCSDKBlockQPMap(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Mode = "blocks"
+	cfg.VideoEncoder = "h264_nvenc_sdk"
+	cfg.ROIControl = "qp-map"
+	cfg.FitROI = false
+	cfg.ROIBlocks = []QPMapBlock{{Col: 1, Row: 2, QOffset: -0.35}}
+
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("validateConfig returned error: %v", err)
+	}
+}
+
+func TestValidateConfigRejectsNVENCSDKNonBlockQPMap(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Mode = "static"
+	cfg.VideoEncoder = "h264_nvenc_sdk"
+	cfg.ROIControl = "qp-map"
+	cfg.FitROI = false
+
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("expected h264_nvenc_sdk non-block QP-map error")
 	}
 }
 

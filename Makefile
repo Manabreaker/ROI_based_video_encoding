@@ -1,7 +1,15 @@
-.PHONY: demo demo-check demo-assets demo-build clean-demo
+.PHONY: demo demo-check demo-assets demo-build roi-nvenc test-native clean-demo
 
 DEMO_DIR := out/demo
 DEMO_BIN := $(DEMO_DIR)/_bin/roi-poc
+NATIVE_NVENC_DIR := native/roi-nvenc
+ifeq ($(OS),Windows_NT)
+NATIVE_NVENC_BIN := $(NATIVE_NVENC_DIR)/roi-nvenc.exe
+NATIVE_NVENC_LDLIBS :=
+else
+NATIVE_NVENC_BIN := $(NATIVE_NVENC_DIR)/roi-nvenc
+NATIVE_NVENC_LDLIBS := -ldl
+endif
 
 DEMO_DYNAMIC_VIDEO := examples/dynamic/854671-hd_1920_1080_25fps.mp4
 DEMO_ROI := 0.32,0.18,0.36,0.54
@@ -19,6 +27,7 @@ DEMO_COMMON_ARGS := \
 	--roi-two-pass=false \
 	--bitrate-window 2 \
 	--overlay-bitrate=true \
+	--debug=true \
 	--metrics=false \
 	--serve=false
 
@@ -101,6 +110,17 @@ demo-assets:
 demo-build:
 	@mkdir -p "$(dir $(DEMO_BIN))"
 	go build -o "$(DEMO_BIN)" ./cmd/roi
+
+roi-nvenc:
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -pedantic \
+		-o "$(NATIVE_NVENC_BIN)" \
+		"$(NATIVE_NVENC_DIR)/main.cpp" \
+		"$(NATIVE_NVENC_DIR)/roi_map.cpp" \
+		"$(NATIVE_NVENC_DIR)/nvenc_encoder.cpp" \
+		$(NATIVE_NVENC_LDLIBS)
+
+test-native: roi-nvenc
+	"$(NATIVE_NVENC_BIN)" --self-test-roi-map
 
 clean-demo:
 	rm -rf "$(DEMO_DIR)"

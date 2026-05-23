@@ -192,6 +192,10 @@ func fitROIToTarget(cfg Config, info VideoInfo, selection ROISelection, targetKb
 }
 
 func renderROIQPMapToTarget(cfg Config, info VideoInfo, selection ROISelection, targetKbps float64, output string, workDir string, rateControl string) (EncodeDecision, error) {
+	if usesNVENCSDKQPMap(cfg) {
+		return renderROINVENCSDK(cfg, info, selection, targetKbps, output, workDir, rateControl)
+	}
+
 	roi := selection.ROI
 	path := filepath.Join(workDir, fmt.Sprintf("roi_qp_map_%s.mp4", rateControl))
 	blockCount := countROIBlockCells(cfg.ROIBlocks)

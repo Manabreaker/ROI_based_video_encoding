@@ -99,6 +99,7 @@ func defaultConfig() Config {
 		OverlayBitrate:       true,
 		BitrateWindow:        1.0,
 		MaxBitrateOverlays:   300,
+		Debug:                false,
 		Metrics:              true,
 		Serve:                false,
 		HTTPAddr:             ":8080",
@@ -160,7 +161,8 @@ func registerConfigFlags(fs *flag.FlagSet, cfg *Config, configPath *string) {
 	fs.Float64Var(&cfg.BitrateWindow, "bitrate-window", cfg.BitrateWindow, "window size in seconds for dynamic bitrate calculation")
 	fs.IntVar(&cfg.MaxBitrateOverlays, "max-bitrate-overlays", cfg.MaxBitrateOverlays, "safety cap for drawtext overlays; increase --bitrate-window for long videos")
 
-	fs.BoolVar(&cfg.Metrics, "metrics", cfg.Metrics, "calculate ROI PSNR against original for input baseline and ROI output")
+	fs.BoolVar(&cfg.Debug, "debug", cfg.Debug, "write comparison video, preview, bitrate windows, reports, metrics, and serve output")
+	fs.BoolVar(&cfg.Metrics, "metrics", cfg.Metrics, "calculate ROI PSNR against original for input baseline and ROI output when --debug=true")
 
 	fs.BoolVar(&cfg.Serve, "serve", cfg.Serve, "start local HTTP server after processing")
 	fs.StringVar(&cfg.HTTPAddr, "http", cfg.HTTPAddr, "HTTP address for --serve")

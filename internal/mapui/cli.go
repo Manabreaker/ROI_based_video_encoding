@@ -28,7 +28,7 @@ func ParseArgs(args []string, output io.Writer) (Options, error) {
 	noOpen := fs.Bool("no-open", false, "do not open the browser automatically")
 	fs.StringVar(&opts.OutDir, "out", opts.OutDir, "default encoder output directory written to YAML")
 	fs.StringVar(&opts.TargetBitrate, "target-bitrate", opts.TargetBitrate, "default target bitrate written to YAML")
-	fs.StringVar(&opts.Encoder, "encoder", opts.Encoder, "default encoder written to YAML: "+roi.SupportedVideoEncoderList())
+	fs.StringVar(&opts.Encoder, "encoder", opts.Encoder, "default encoder written to YAML for QP-map ROI; use libx264 or h264_nvenc_sdk")
 	fs.Float64Var(&opts.BitrateWindow, "bitrate-window", opts.BitrateWindow, "default bitrate overlay window written to YAML")
 	fs.IntVar(&opts.ROIBlockSize, "roi-block-size", opts.ROIBlockSize, "QP-map block size in pixels")
 	fs.StringVar(&opts.Preset, "preset", opts.Preset, "x264 preset written to YAML")
@@ -55,7 +55,7 @@ func DefaultOptions() Options {
 		OpenBrowser:   true,
 		OutDir:        "out/roi_blocks_generated",
 		TargetBitrate: "500k",
-		Encoder:       "auto",
+		Encoder:       "libx264",
 		Preset:        "veryfast",
 		NVENCPreset:   "p4",
 		BitrateWindow: 2,
@@ -96,10 +96,14 @@ func ValidateOptions(opts Options) error {
 }
 
 func validateEncoder(value string) error {
-	if roi.IsSupportedVideoEncoder(value) {
+	encoder := strings.ToLower(strings.TrimSpace(value))
+	if encoder == "libx264" || encoder == "h264_nvenc_sdk" {
 		return nil
 	}
-	return fmt.Errorf("--encoder must be %s", roi.SupportedVideoEncoderList())
+	if roi.IsSupportedVideoEncoder(encoder) {
+		return fmt.Errorf("--encoder %s cannot be used by roi-map-ui because block QP-map ROI requires libx264 or h264_nvenc_sdk", encoder)
+	}
+	return fmt.Errorf("--encoder must be libx264 or h264_nvenc_sdk")
 }
 
 func validateBlockSize(value int) error {

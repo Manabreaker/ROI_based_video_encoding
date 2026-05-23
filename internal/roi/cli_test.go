@@ -127,6 +127,33 @@ target-bitrate: 500k
 	}
 }
 
+func TestParseArgsDebugDefaultsFalseAndFlagOverridesYAML(t *testing.T) {
+	defaults, err := ParseArgs([]string{"--input", "video.mp4"})
+	if err != nil {
+		t.Fatalf("ParseArgs returned error: %v", err)
+	}
+	if defaults.Debug {
+		t.Fatal("Debug = true, want false by default")
+	}
+
+	path := filepath.Join(t.TempDir(), "roi.yaml")
+	content := []byte(`
+input: video.mp4
+debug: false
+`)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := ParseArgs([]string{"--config", path, "--debug=true"})
+	if err != nil {
+		t.Fatalf("ParseArgs returned error: %v", err)
+	}
+	if !cfg.Debug {
+		t.Fatal("Debug = false, want true from flag override")
+	}
+}
+
 func TestParseArgsDoesNotTreatFlagValueYAMLPathAsConfig(t *testing.T) {
 	cfg, err := ParseArgs([]string{"--input", "clip.yaml", "--target-bitrate", "450k"})
 	if err != nil {

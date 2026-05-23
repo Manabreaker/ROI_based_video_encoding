@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,6 +110,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	disableBrowserCache(w)
 	_, _ = w.Write([]byte(indexHTML))
 }
 
@@ -119,6 +121,7 @@ func (s *Server) handleVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	disableBrowserCache(w)
 	http.ServeFile(w, r, s.inputPath)
 }
 
@@ -129,8 +132,10 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	disableBrowserCache(w)
 	writeJSON(w, metaResponse{
 		Input:         s.opts.Input,
+		VideoURL:      s.videoURL(),
 		ConfigOut:     s.opts.ConfigOut,
 		OutDir:        s.opts.OutDir,
 		TargetBitrate: s.opts.TargetBitrate,
@@ -141,6 +146,24 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		ROIBlockSize:  s.opts.ROIBlockSize,
 		Palette:       Palette,
 	})
+}
+
+func (s *Server) videoURL() string {
+	return "/video?v=" + url.QueryEscape(videoCacheKey(s.inputPath))
+}
+
+func videoCacheKey(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return path
+	}
+	return fmt.Sprintf("%s:%d:%d", path, info.Size(), info.ModTime().UnixNano())
+}
+
+func disableBrowserCache(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
